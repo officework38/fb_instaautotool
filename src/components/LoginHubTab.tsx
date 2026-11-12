@@ -13,8 +13,11 @@ import {
   EyeOff,
   FolderOpen,
   Smartphone,
+  ExternalLink,
+  KeyRound,
 } from 'lucide-react';
 import { FbApiConfig, SavedSession, TargetItem } from '../types';
+import { SAMPLE_VIDEOS } from '../data/initialData';
 
 interface LoginHubTabProps {
   activeSession: SavedSession | null;
@@ -22,6 +25,7 @@ interface LoginHubTabProps {
   setFbConfig: React.Dispatch<React.SetStateAction<FbApiConfig>>;
   onSessionChanged: (session: SavedSession | null) => void;
   onAddTargetDirect: (target: TargetItem) => void;
+  onAttachPagesDirect: (targets: TargetItem[]) => void;
   onGoToContent: () => void;
   onGoToAccounts: () => void;
   onNotify: (msg: string) => void;
@@ -39,7 +43,10 @@ const CHROME_PROFILE_PRESETS = [
 
 export const LoginHubTab: React.FC<LoginHubTabProps> = ({
   activeSession,
+  fbConfig,
+  setFbConfig,
   onSessionChanged,
+  onAttachPagesDirect,
   onGoToContent,
   onGoToAccounts,
   onNotify,
@@ -51,35 +58,41 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
     text: string;
   } | null>(null);
 
-  // OPTION 1: Simple Manual Username / Email / Phone & Password Facebook Login
+  // OPTION 1: Real Facebook ID / Email / Phone & Password Login
   const [manualUsername, setManualUsername] = useState('');
   const [manualPassword, setManualPassword] = useState('');
   const [manual2FA, setManual2FA] = useState('');
+  const [needs2FAHighlight, setNeeds2FAHighlight] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [rememberManualLogin, setRememberManualLogin] = useState(true);
   const [isManualBusy, setIsManualBusy] = useState(false);
 
-  // OPTION 2: Facebook Login via Cookies
-  const [cookieNickname, setCookieNickname] = useState('Cookies_FB_Profile');
-  const [cookieSource, setCookieSource] = useState<'mobile_app' | 'mobile_browser' | 'cookie_vault'>('mobile_app');
-  const [cookiesInput, setCookiesInput] = useState(activeSession?.cookies || '');
+  // OPTION 2: Real Live-Verified Facebook Cookies Login
+  const [cookieNickname, setCookieNickname] = useState('');
+  const [cookieSource, setCookieSource] = useState<'mobile_app' | 'mobile_browser' | 'cookie_vault'>('cookie_vault');
+  const [cookiesInput, setCookiesInput] = useState('');
   const [rememberCookies, setRememberCookies] = useState(true);
   const [isCookiesBusy, setIsCookiesBusy] = useState(false);
 
-  // OPTION 3: Manual Chrome Profile Choose & Login
+  // OPTION 3: Real Chrome Profile Choose & CDP/Folder Verification
   const [chromeProfilePreset, setChromeProfilePreset] = useState('Default');
   const [chromeCustomName, setChromeCustomName] = useState('');
   const [chromeUserDataPath, setChromeUserDataPath] = useState(
     'C:\\Users\\Administrator\\AppData\\Local\\Google\\Chrome\\User Data'
   );
   const [chromeDebugPort, setChromeDebugPort] = useState('9222');
+  const [chromeProfileEmailHint, setChromeProfileEmailHint] = useState<string | null>(null);
+  const [chromeUploadedCookiesText, setChromeUploadedCookiesText] = useState<string | null>(null);
+  const [chromeUploadedDbBase64, setChromeUploadedDbBase64] = useState<string | null>(null);
   const [isChromeBusy, setIsChromeBusy] = useState(false);
 
-  // Facebook Mobile App Selector (Quick Mobile App Connect)
+  // Facebook Official App Selector (Real OAuth / Access Token / Verified Session)
   const [selectedMobileApp, setSelectedMobileApp] = useState<
     'fb_official' | 'fb_lite' | 'fb_mobile_web'
   >('fb_official');
-  const [mobileAppNickname, setMobileAppNickname] = useState('My_Facebook_Mobile_App');
+  const [officialAppId, setOfficialAppId] = useState(fbConfig.appId || '');
+  const [officialAccessToken, setOfficialAccessToken] = useState(fbConfig.accessToken || '');
+  const [mobileAppNickname, setMobileAppNickname] = useState('Facebook Official App');
   const [mobileAppPin, setMobileAppPin] = useState('');
   const [isMobileAppBusy, setIsMobileAppBusy] = useState(false);
 
@@ -94,23 +107,94 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
       .catch(() => {});
   }, [activeSession]);
 
-  // OPTION 1 Handler: Manual Username & Password Facebook Login
+  // Helper: Map real fetched Facebook Pages into Content TargetItem rows (+3m slot) and attach
+  const buildAndAttachPages = (
+    pages: Array<{ id: string; name: string; link?: string; pageToken?: string }>
+  ) => {
+    if (!pages || pages.length === 0) return 0;
+
+    const dt = new Date(Date.now() + 3 * 60 * 1000);
+    const yyyy = dt.getFullYear();
+    const mm = String(dt.getMonth() + 1).padStart(2, '0');
+    const dd = String(dt.getDate()).padStart(2, '0');
+    const hh = String(dt.getHours()).padStart(2, '0');
+    const min = String(dt.getMinutes()).padStart(2, '0');
+    const dateStr = `${yyyy}-${mm}-${dd}`;
+    const timeStr = `${hh}:${min}`;
+
+    const mappedTargets: TargetItem[] = pages.map((p, idx) => {
+      const sample = SAMPLE_VIDEOS[idx % SAMPLE_VIDEOS.length];
+      return {
+        id: `target-fb-${Date.now()}-${p.id || idx}`,
+        profileName: p.name,
+        type: 'Page',
+        pageId: p.id,
+        pageToken: p.pageToken,
+        pageUrl: p.link || `https://facebook.com/${p.id}`,
+        videoPath: sample.path,
+        videoName: sample.name,
+        mediaType: 'video',
+        caption: `Trending update on ${p.name}!`,
+        date: dateStr,
+        time: timeStr,
+        status: 'pending',
+        createdAt: new Date().toISOString(),
+      };
+    });
+
+    onAttachPagesDirect(mappedTargets);
+    return mappedTargets.length;
+  };
+
+  // Helper: Open native installed Facebook Official App on mobile device without window.open
+  const launchInstalledFacebookApp = (appType: 'fb_official' | 'fb_lite' | 'fb_mobile_web', oauthFallbackUrl?: string) => {
+    try {
+      const ua = navigator.userAgent || '';
+      const isAndroid = /Android/i.test(ua);
+      const isIOS = /iPhone|iPad|iPod/i.test(ua);
+      const fallback = encodeURIComponent(oauthFallbackUrl || 'https://m.facebook.com/');
+      let launchUrl = oauthFallbackUrl || '';
+
+      if (appType === 'fb_mobile_web' && oauthFallbackUrl) {
+        launchUrl = oauthFallbackUrl;
+      } else if (isAndroid) {
+        const pkg = appType === 'fb_lite' ? 'com.facebook.lite' : 'com.facebook.katana';
+        launchUrl = `intent://feed/#Intent;package=${pkg};scheme=fb;S.browser_fallback_url=${fallback};end`;
+      } else if (isIOS) {
+        launchUrl = 'fb://feed/';
+      }
+
+      if (launchUrl) {
+        const a = document.createElement('a');
+        a.href = launchUrl;
+        a.target = '_top';
+        a.rel = 'noopener noreferrer';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        onLog('INFO', `Launched Facebook app URI [${appType}].`);
+      }
+    } catch {}
+  };
+
+  // OPTION 1 Handler: Real Live Facebook ID / Email / Phone & Password Login
   const handleManualCredentialsLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setStatusMessage(null);
+    setNeeds2FAHighlight(false);
 
     const user = manualUsername.trim();
     const pass = manualPassword;
     if (!user || !pass) {
       setStatusMessage({
         type: 'error',
-        text: 'Facebook Email / Phone / Username aur Password dono enter karein.',
+        text: 'Apna original Facebook Email / Phone / ID aur Password enter karein.',
       });
       return;
     }
 
     setIsManualBusy(true);
-    onLog('INFO', `Starting manual Facebook login for account [${user}]...`);
+    onLog('INFO', `Logging into live facebook.com for [${user}]...`);
     try {
       const res = await fetch('/api/fb/manual-login', {
         method: 'POST',
@@ -124,34 +208,40 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Facebook login failed. Credentials check karein.');
+        if (data?.requires2FA) {
+          setNeeds2FAHighlight(true);
+        }
+        throw new Error(data.error || 'Facebook login verify nahi ho saka.');
       }
 
       onSessionChanged(data.session);
-      setSavedSessions((prev) => {
-        const filtered = prev.filter((s) => s.id !== data.session.id);
-        return [data.session, ...filtered];
-      });
+      setSavedSessions((prev) => [
+        data.session,
+        ...prev.filter((s) => s.id !== data.session.id),
+      ]);
       setManualPassword('');
+      setManual2FA('');
+
+      const attachedCount = Array.isArray(data.pages) ? buildAndAttachPages(data.pages) : 0;
       onLog(
         'SUCCESS',
-        `Manual Facebook login verified for [${data.session.nickname}]. Moving to Content & Media...`
+        `Verified real Facebook login for [${data.session.nickname}] (ID: ${data.session.c_user}). Fetched ${attachedCount} real Page(s).`
       );
-      onNotify(`Logged in as ${data.session.nickname}! Moving to Content...`);
+      onNotify(`Verified ${data.session.nickname} (${attachedCount} Page(s))!`);
       setStatusMessage({
         type: 'success',
-        text: `Facebook login successful for ${data.session.nickname}! Moving to Content section...`,
+        text: `Original Facebook login verified (${data.session.nickname}) · ${attachedCount} Page(s) fetched. Moving to Content...`,
       });
-      setTimeout(() => onGoToContent(), 550);
+      setTimeout(() => onGoToContent(), 600);
     } catch (err: any) {
       setStatusMessage({ type: 'error', text: err.message });
-      onLog('ERROR', `Manual Facebook login error: ${err.message}`);
+      onLog('ERROR', `Facebook login rejected: ${err.message}`);
     } finally {
       setIsManualBusy(false);
     }
   };
 
-  // OPTION 2 Handler: Import Cookies from .txt file
+  // OPTION 2 Handler: Import Cookies (.txt or .json)
   const handleImportCookiesTxt = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -159,102 +249,84 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
     reader.onload = (ev) => {
       const text = ((ev.target?.result as string) || '').trim();
       if (!text) {
-        setStatusMessage({ type: 'error', text: 'Selected .txt file empty hai.' });
+        setStatusMessage({ type: 'error', text: 'Selected file empty hai.' });
         return;
       }
       setCookiesInput(text);
-      const baseName = file.name.replace(/\.txt$/i, '');
-      if (baseName) setCookieNickname(baseName);
+      const baseName = file.name.replace(/\.(txt|json)$/i, '');
+      if (baseName && !cookieNickname) setCookieNickname(baseName);
       setStatusMessage({
         type: 'info',
-        text: `Cookies loaded from "${file.name}". Click "Login with Cookies & Go to Content" to verify.`,
+        text: `Cookies loaded from "${file.name}". Click "Verify Cookies on Facebook & Go to Content".`,
       });
-      onLog('INFO', `Loaded Facebook cookies from file [${file.name}].`);
+      onLog('INFO', `Loaded cookies file [${file.name}] for live verification.`);
     };
     reader.readAsText(file);
     e.target.value = '';
   };
 
-  // OPTION 2 Handler: Login with Facebook Cookies
+  // OPTION 2 Handler: Real Live Verification of Facebook Cookies
   const handleCookiesLogin = async () => {
     setStatusMessage(null);
     const raw = cookiesInput.trim();
-    if (!raw || !raw.includes('=')) {
+    if (!raw) {
       setStatusMessage({
         type: 'error',
-        text: 'Valid Facebook cookies (e.g. c_user=...; xs=...;) paste karein ya .txt file upload karein.',
+        text: 'Valid Facebook cookies (semicolon string, JSON array, ya Netscape .txt) paste karein.',
       });
       return;
     }
 
     setIsCookiesBusy(true);
+    onLog('INFO', 'Verifying Facebook cookies live against facebook.com...');
     try {
-      const firstLine = raw.split(/\r?\n/).find((l) => l.trim().includes('='))?.trim() || raw;
-      const cUserMatch = firstLine.match(/c_user=([0-9]+)/);
-      if (!cUserMatch || !firstLine.includes('xs=')) {
-        throw new Error('Cookies string me "c_user=" aur "xs=" dono hone chahiye.');
-      }
-
-      const cUserId = cUserMatch[1];
-      const nickname = cookieNickname.trim() || `FB_${cUserId.slice(-6)}`;
-
-      if (rememberCookies) {
-        const res = await fetch('/api/fb/saved-sessions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            nickname,
-            c_user: cUserId,
-            source: cookieSource,
-            cookies: firstLine,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok || !data.success) {
-          throw new Error(data.error || 'Could not save cookie session.');
-        }
-        onSessionChanged(data.session);
-        setSavedSessions((prev) => {
-          const filtered = prev.filter((s) => s.id !== data.session.id);
-          return [data.session, ...filtered];
-        });
-      } else {
-        onSessionChanged({
-          id: `session-cookie-${Date.now()}`,
-          nickname,
-          c_user: cUserId,
+      const res = await fetch('/api/fb/cookies-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cookies: raw,
+          nickname: cookieNickname.trim() || undefined,
           source: cookieSource,
-          cookies: firstLine,
-          savedAt: new Date().toISOString(),
-          lastUsed: new Date().toISOString(),
-          isActive: true,
-        });
+          saveSession: rememberCookies,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success || !data.session) {
+        throw new Error(data.error || 'Facebook ne cookies reject kar di hain.');
       }
 
+      onSessionChanged(data.session);
+      setSavedSessions((prev) => [
+        data.session,
+        ...prev.filter((s) => s.id !== data.session.id),
+      ]);
+
+      const attachedCount = Array.isArray(data.pages) ? buildAndAttachPages(data.pages) : 0;
       onLog(
         'SUCCESS',
-        `Cookies login verified for [${nickname}] (c_user: ${cUserId}). Moving to Content & Media...`
+        `Live cookies verified for [${data.session.nickname}] (ID: ${data.session.c_user}). Fetched ${attachedCount} real Page(s).`
       );
-      onNotify(`Cookies Verified (${nickname})! Moving to Content...`);
+      onNotify(`Cookies Verified (${data.session.nickname}) · ${attachedCount} Page(s)!`);
       setStatusMessage({
         type: 'success',
-        text: `Cookies login verified (c_user: ${cUserId}). Moving to Content section...`,
+        text: `Live Facebook cookies verified (${data.session.nickname}) · ${attachedCount} Page(s) attached. Moving to Content...`,
       });
-      setTimeout(() => onGoToContent(), 550);
+      setTimeout(() => onGoToContent(), 600);
     } catch (err: any) {
       setStatusMessage({ type: 'error', text: err.message });
-      onLog('WARN', `Cookies login note: ${err.message}`);
+      onLog('WARN', `Cookie verification rejected: ${err.message}`);
     } finally {
       setIsCookiesBusy(false);
     }
   };
 
-  // OPTION 3 Handler: Choose Chrome Profile Folder via Folder Picker
-  const handlePickChromeProfileFolder = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // OPTION 3 Handler: Pick Chrome Profile Folder and extract Preferences + Cookies/export if readable
+  const handlePickChromeProfileFolder = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    const firstRel = (files[0] as any).webkitRelativePath || files[0].name;
+    const fileList = Array.from(files);
+    const firstRel = (fileList[0] as any).webkitRelativePath || fileList[0].name;
     const rootFolder = firstRel.split('/')[0] || 'Default';
 
     if (/^(Default|Profile \d+)$/i.test(rootFolder)) {
@@ -265,25 +337,75 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
       setChromeProfilePreset('Custom');
       setChromeCustomName(rootFolder);
     }
+    setChromeUserDataPath(`Chrome Profile: ${rootFolder}`);
 
-    setChromeUserDataPath(`Chrome Profile Folder: ${rootFolder}`);
+    setChromeProfileEmailHint(null);
+    setChromeUploadedCookiesText(null);
+    setChromeUploadedDbBase64(null);
+
+    // Inspect Preferences JSON inside picked Chrome folder for real account name/email
+    const prefsFile = fileList.find((f) => {
+      const rel = ((f as any).webkitRelativePath || f.name).replace(/\\/g, '/');
+      return rel.endsWith('/Preferences') || f.name === 'Preferences';
+    });
+    if (prefsFile && prefsFile.size < 2 * 1024 * 1024) {
+      try {
+        const text = await prefsFile.text();
+        const parsed = JSON.parse(text);
+        const acct = parsed?.account_info?.[0];
+        const profileName = parsed?.profile?.name;
+        const label = acct?.email || acct?.full_name || profileName;
+        if (label) setChromeProfileEmailHint(String(label));
+      } catch {}
+    }
+
+    // Look for plain cookie exports inside picked folder first
+    const exportFile = fileList.find((f) => /\.(txt|json)$/i.test(f.name) && /cookie/i.test(f.name));
+    if (exportFile && exportFile.size < 2 * 1024 * 1024) {
+      try {
+        const txt = await exportFile.text();
+        if (txt.includes('c_user') && txt.includes('xs')) {
+          setChromeUploadedCookiesText(txt);
+        }
+      } catch {}
+    }
+
+    // Read Chrome SQLite Cookies DB if under 8MB
+    const cookiesDbFile = fileList.find((f) => {
+      const rel = ((f as any).webkitRelativePath || f.name).replace(/\\/g, '/');
+      return rel.endsWith('/Network/Cookies') || rel.endsWith('/Cookies') || f.name === 'Cookies';
+    });
+    if (cookiesDbFile && cookiesDbFile.size > 0 && cookiesDbFile.size <= 8 * 1024 * 1024) {
+      try {
+        const buf = await cookiesDbFile.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        let binary = '';
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+        }
+        setChromeUploadedDbBase64(btoa(binary));
+      } catch {}
+    }
+
     setStatusMessage({
       type: 'info',
-      text: `Selected Chrome Profile "${rootFolder}". Click "Connect Chrome Profile & Go to Content" to proceed.`,
+      text: `Selected Chrome Profile "${rootFolder}". Click "Verify Chrome Profile & Go to Content" to validate live Facebook login.`,
     });
-    onLog('INFO', `User selected local Chrome profile folder [${rootFolder}].`);
+    onLog('INFO', `Inspected Chrome profile folder [${rootFolder}].`);
     e.target.value = '';
   };
 
-  // OPTION 3 Handler: Connect Manual Chrome Profile & Proceed
+  // OPTION 3 Handler: Verify Real Chrome Profile Session (CDP Port 9222 / Unencrypted Cookies)
   const handleChromeProfileLogin = async () => {
     setStatusMessage(null);
     const selectedProfile =
       chromeProfilePreset === 'Custom'
-        ? chromeCustomName.trim() || 'Custom_Chrome_Profile'
+        ? chromeCustomName.trim() || 'Custom_Profile'
         : chromeProfilePreset;
 
     setIsChromeBusy(true);
+    onLog('INFO', `Checking live Chrome Profile [${selectedProfile}] for active Facebook login...`);
     try {
       const res = await fetch('/api/fb/chrome-profile-login', {
         method: 'POST',
@@ -292,146 +414,157 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
           profileDirectory: selectedProfile,
           userDataPath: chromeUserDataPath.trim(),
           port: chromeDebugPort.trim() || '9222',
+          uploadedCookiesText: chromeUploadedCookiesText || undefined,
+          uploadedCookiesDbBase64: chromeUploadedDbBase64 || undefined,
         }),
       });
       const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Could not connect chosen Chrome profile.');
+      if (!res.ok || !data.success || !data.session) {
+        throw new Error(
+          data.error || 'Selected Chrome profile me verified Facebook login nahi mili.'
+        );
       }
 
       onSessionChanged(data.session);
-      setSavedSessions((prev) => {
-        const filtered = prev.filter((s) => s.id !== data.session.id);
-        return [data.session, ...filtered];
-      });
+      setSavedSessions((prev) => [
+        data.session,
+        ...prev.filter((s) => s.id !== data.session.id),
+      ]);
 
-      const portNote = data.portConnected
-        ? ` (Live Chrome port ${chromeDebugPort} connected)`
-        : '';
+      const attachedCount = Array.isArray(data.pages) ? buildAndAttachPages(data.pages) : 0;
       onLog(
         'SUCCESS',
-        `Chrome profile [${selectedProfile}] connected & saved${portNote}. Moving to Content & Media...`
+        `Chrome Profile [${selectedProfile}] verified (${data.session.nickname}) · ${attachedCount} real Page(s) fetched.`
       );
-      onNotify(`Chrome Profile "${selectedProfile}" Connected! Moving to Content...`);
+      onNotify(`Chrome Profile Verified · ${attachedCount} Page(s) Attached!`);
       setStatusMessage({
         type: 'success',
-        text: `Chrome profile "${selectedProfile}" selected & saved${portNote}. Moving to Content...`,
+        text: `Chrome profile verified (${data.session.nickname}) · ${attachedCount} Page(s) attached. Moving to Content...`,
       });
-      setTimeout(() => onGoToContent(), 550);
+      setTimeout(() => onGoToContent(), 600);
     } catch (err: any) {
       setStatusMessage({ type: 'error', text: err.message });
-      onLog('ERROR', `Chrome profile connect error: ${err.message}`);
+      onLog('WARN', `Chrome profile check: ${err.message}`);
     } finally {
       setIsChromeBusy(false);
     }
   };
 
+  // Restore saved real session & verify/fetch its real pages
   const handleQuickRestoreSaved = async (session: SavedSession) => {
+    setStatusMessage({ type: 'info', text: `Verifying saved session "${session.nickname}"...` });
     try {
       await fetch(`/api/fb/saved-sessions/${session.id}/activate`, { method: 'POST' });
     } catch {}
+
     onSessionChanged({ ...session, isActive: true, lastUsed: new Date().toISOString() });
-    onLog('SUCCESS', `Restored saved session [${session.nickname}] — Moving to Content & Media...`);
-    onNotify(`Restored ${session.nickname}! Moving to Content...`);
-    setTimeout(() => onGoToContent(), 400);
+    await handleConnectMobileApp('fb_official', false, session.cookies, session.accessToken);
   };
 
-  // Facebook Mobile App Selector: Get PIN & Connect
-  const handleGetMobileAppPin = async () => {
+  // OFFICIAL APP HANDLER 1: Trigger Real Facebook Official OAuth Dialog (App Links / Mobile App / Web)
+  const handleOfficialFacebookOAuth = () => {
     setStatusMessage(null);
-    setIsMobileAppBusy(true);
-    try {
-      const appLabel =
-        selectedMobileApp === 'fb_official'
-          ? 'Facebook Official App'
-          : selectedMobileApp === 'fb_lite'
-          ? 'Facebook Lite App'
-          : 'Mobile Browser (m.facebook.com)';
-      const res = await fetch('/api/fb/mobile-sync/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          nickname: mobileAppNickname.trim() || appLabel,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success || !data.pin) {
-        throw new Error(data.error || 'Could not generate Mobile App PIN.');
-      }
-      setMobileAppPin(data.pin);
+    const cleanAppId = officialAppId.trim() || fbConfig.appId.trim();
+    if (!cleanAppId || !/^\d{8,}$/.test(cleanAppId)) {
       setStatusMessage({
-        type: 'info',
-        text: `${appLabel} selected — Sync PIN ${data.pin} ready. Click "Connect Mobile App & Go to Content".`,
+        type: 'error',
+        text: 'Official Facebook OAuth open karne ke liye valid numeric Meta App ID enter karein (ya neeche apna real User Access Token paste karein / Option 1-2 se login verify karein).',
       });
-      onLog('INFO', `Generated PIN [${data.pin}] for ${appLabel}.`);
-    } catch (err: any) {
-      setStatusMessage({ type: 'error', text: err.message });
-    } finally {
-      setIsMobileAppBusy(false);
+      return;
     }
+
+    setFbConfig((prev) => ({ ...prev, appId: cleanAppId }));
+    const redirectUri = `${window.location.origin}${window.location.pathname}`;
+    const oauthUrl = `https://m.facebook.com/v19.0/dialog/oauth?client_id=${encodeURIComponent(
+      cleanAppId
+    )}&redirect_uri=${encodeURIComponent(
+      redirectUri
+    )}&response_type=token&scope=pages_show_list,pages_read_engagement,pages_manage_posts,public_profile`;
+
+    onLog('INFO', `Launching real Facebook Official OAuth dialog (App ID: ${cleanAppId})...`);
+    launchInstalledFacebookApp(selectedMobileApp, oauthUrl);
+    window.location.assign(oauthUrl);
   };
 
-  const handleConnectMobileApp = async () => {
+  // OFFICIAL APP HANDLER 2: Open Official Mobile App + Verify Real Token / Real Active Session & Fetch Real Pages
+  const handleConnectMobileApp = async (
+    overrideApp?: 'fb_official' | 'fb_lite' | 'fb_mobile_web',
+    launchNative = true,
+    overrideCookies?: string,
+    overrideToken?: string
+  ) => {
+    const activeApp = overrideApp || selectedMobileApp;
     setStatusMessage(null);
     setIsMobileAppBusy(true);
+
     const appLabel =
-      selectedMobileApp === 'fb_official'
+      activeApp === 'fb_official'
         ? 'Facebook Official App'
-        : selectedMobileApp === 'fb_lite'
+        : activeApp === 'fb_lite'
         ? 'Facebook Lite App'
         : 'Mobile Browser (m.facebook.com)';
-    const sourceVal: SavedSession['source'] =
-      selectedMobileApp === 'fb_mobile_web' ? 'mobile_browser' : 'mobile_app';
+    const appPackage =
+      activeApp === 'fb_official'
+        ? 'com.facebook.katana'
+        : activeApp === 'fb_lite'
+        ? 'com.facebook.lite'
+        : 'm.facebook.com';
+
+    const tokenToUse = (overrideToken ?? officialAccessToken.trim()) || activeSession?.accessToken || '';
+    const cookiesToUse = (overrideCookies ?? activeSession?.cookies) || '';
+
+    if (launchNative && (tokenToUse || cookiesToUse)) {
+      launchInstalledFacebookApp(activeApp);
+    }
 
     try {
-      let pinToClaim = mobileAppPin.trim();
-      if (!pinToClaim) {
-        const createRes = await fetch('/api/fb/mobile-sync/create', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            nickname: mobileAppNickname.trim() || appLabel,
-          }),
-        });
-        const createData = await createRes.json();
-        if (createRes.ok && createData.pin) {
-          pinToClaim = createData.pin;
-          setMobileAppPin(pinToClaim);
-        }
-      }
-
-      const res = await fetch('/api/fb/mobile-sync/claim', {
+      const res = await fetch('/api/fb/mobile-app/connect', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          pin: pinToClaim,
+          appType: activeApp,
+          appPackage,
+          appLabel,
           nickname: mobileAppNickname.trim() || appLabel,
-          source: sourceVal,
+          pin: mobileAppPin.trim() || undefined,
+          accessToken: tokenToUse || undefined,
+          cookies: cookiesToUse || undefined,
         }),
       });
       const data = await res.json();
       if (!res.ok || !data.success || !data.session) {
-        throw new Error(data.error || 'Could not connect Facebook Mobile App.');
+        if (launchNative) {
+          // Still open installed FB app on mobile so user can login/get session if desired
+          launchInstalledFacebookApp(activeApp);
+        }
+        throw new Error(
+          data.error || 'Facebook Official App par abhi koi original login verified nahi hai.'
+        );
       }
 
       onSessionChanged(data.session);
-      setSavedSessions((prev) => {
-        const filtered = prev.filter((s) => s.id !== data.session.id);
-        return [data.session, ...filtered];
-      });
+      setSavedSessions((prev) => [
+        data.session,
+        ...prev.filter((s) => s.id !== data.session.id),
+      ]);
+      if (tokenToUse) {
+        setFbConfig((prev) => ({ ...prev, accessToken: tokenToUse, isValid: true }));
+      }
+
+      const attachedCount = Array.isArray(data.pages) ? buildAndAttachPages(data.pages) : 0;
       onLog(
         'SUCCESS',
-        `Connected [${appLabel}] (${data.session.nickname}) & saved permanently. Moving to Content...`
+        `Verified [${appLabel}] (${data.session.nickname} · ID: ${data.session.c_user}). Fetched ${attachedCount} REAL Page(s)!`
       );
-      onNotify(`${appLabel} Connected! Moving to Content...`);
+      onNotify(`${data.session.nickname} Verified · ${attachedCount} Real Page(s)!`);
       setStatusMessage({
         type: 'success',
-        text: `${appLabel} connected & saved permanently. Moving to Content...`,
+        text: `Original Facebook App verified (${data.session.nickname}) · ${attachedCount} REAL Page(s) Content page par attach ho gaye hain.`,
       });
-      setTimeout(() => onGoToContent(), 550);
+      setTimeout(() => onGoToContent(), 600);
     } catch (err: any) {
       setStatusMessage({ type: 'error', text: err.message });
-      onLog('ERROR', `Mobile App connection error: ${err.message}`);
+      onLog('WARN', `Facebook Official App verification: ${err.message}`);
     } finally {
       setIsMobileAppBusy(false);
     }
@@ -439,14 +572,14 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
-      {/* Header & Active Saved Session Bar */}
+      {/* Header & Active Verified Session Bar */}
       <section className="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1">
           <h1 className="text-lg font-bold text-white tracking-tight text-balance">
-            Facebook Login Gateway — 3 Login Options
+            Facebook Original Login Gateway — Live Account &amp; Page Verification
           </h1>
           <p className="text-xs text-slate-400">
-            Option 1: Username &amp; Password · Option 2: Cookies · Option 3: Manual Chrome Profile. Login verify hote hi session save ho jayega aur aap khudbakhud Content page par move ho jayenge.
+            Option 1: Original FB ID &amp; Password · Option 2: Live Cookies Verification · Option 3: Real Chrome Profile (Port 9222 / Profile DB) · Official Facebook App OAuth/Token. Sirf verified account par hi Pages fetch hokar Content page par aayenge.
           </p>
         </div>
 
@@ -493,9 +626,9 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
         </div>
       )}
 
-      {/* 3 Login Option Cards */}
+      {/* 3 Original Login Option Cards */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
-        {/* OPTION 1: Simple Manual Facebook Username & Password Login */}
+        {/* OPTION 1: Real Facebook Username / Email / Phone & Password Login */}
         <form
           onSubmit={handleManualCredentialsLogin}
           className="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col justify-between gap-4"
@@ -503,16 +636,16 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
           <div className="space-y-4">
             <div className="space-y-1">
               <div className="text-[11px] font-mono font-semibold text-blue-400">
-                Option 01 · Simple Manual Login
+                Option 01 · Live Facebook Auth
               </div>
               <h2 className="text-base font-bold text-white flex items-center gap-2">
                 <UserCheck className="w-4 h-4 text-blue-400 shrink-0" />
-                <span>Username &amp; Password Login</span>
+                <span>Original ID &amp; Password Login</span>
               </h2>
             </div>
 
             <p className="text-xs text-slate-400 leading-relaxed">
-              Apna Facebook Email, Phone Number, ya Username aur Password daal kar seedha login karein. Session future ke liye save ho jayega.
+              Real `facebook.com` par direct verify hota hai. Agar ID, password, ya 2FA ghalat hoga to Facebook ka real error aayega; verify hone par real Pages fetch honge.
             </p>
 
             <div className="space-y-3">
@@ -539,7 +672,7 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
                     type={showPassword ? 'text' : 'password'}
                     value={manualPassword}
                     onChange={(e) => setManualPassword(e.target.value)}
-                    placeholder="Enter Facebook password"
+                    placeholder="Enter original Facebook password"
                     autoComplete="current-password"
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg pl-3 pr-9 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
                   />
@@ -560,14 +693,18 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
 
               <div>
                 <label className="block text-[11px] font-medium text-slate-300 mb-1">
-                  2FA Security Code (Optional)
+                  2FA Security Code {needs2FAHighlight ? '(Required by Facebook)' : '(If Enabled)'}
                 </label>
                 <input
                   type="text"
                   value={manual2FA}
                   onChange={(e) => setManual2FA(e.target.value)}
-                  placeholder="6-digit 2FA code (agar on ho)"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono tabular-nums text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
+                  placeholder="6-digit authenticator / SMS code"
+                  className={`w-full bg-slate-950 rounded-lg px-3 py-2 text-xs font-mono tabular-nums text-slate-100 placeholder:text-slate-600 focus:outline-none border ${
+                    needs2FAHighlight
+                      ? 'border-amber-500 focus:border-amber-400'
+                      : 'border-slate-800 focus:border-blue-500'
+                  }`}
                 />
               </div>
 
@@ -578,7 +715,7 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
                   onChange={(e) => setRememberManualLogin(e.target.checked)}
                   className="rounded border-slate-700 bg-slate-950 text-blue-500 focus:ring-0"
                 />
-                <span>Session permanently save karein (Auto-login future ke liye)</span>
+                <span>Verified session vault me save karein</span>
               </label>
             </div>
           </div>
@@ -593,38 +730,38 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
             ) : (
               <UserCheck className="w-3.5 h-3.5" />
             )}
-            <span>Login with Password &amp; Go to Content</span>
+            <span>{isManualBusy ? 'Verifying on Facebook...' : 'Login & Verify on Facebook'}</span>
           </button>
         </form>
 
-        {/* OPTION 2: Facebook Login via Cookies */}
+        {/* OPTION 2: Live Verified Facebook Cookies Login */}
         <section className="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col justify-between gap-4">
           <div className="space-y-4">
             <div className="space-y-1">
               <div className="text-[11px] font-mono font-semibold text-emerald-400">
-                Option 02 · Cookie Authentication
+                Option 02 · Live Cookie Verification
               </div>
               <h2 className="text-base font-bold text-white flex items-center gap-2">
                 <Cookie className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>Login with Cookies</span>
+                <span>Login with Real Cookies</span>
               </h2>
             </div>
 
             <p className="text-xs text-slate-400 leading-relaxed">
-              Mobile ya Desktop browser se nikali hui Facebook Cookies (`c_user` aur `xs`) paste karein ya `.txt` file upload karke instant login karein.
+              `c_user` aur `xs` cookies string, JSON export, ya Netscape `.txt` upload karein. Server `facebook.com` par live check karke real profile &amp; Pages fetch karega.
             </p>
 
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-[11px] font-medium text-slate-300 mb-1">
-                    Account Label
+                    Account Label (Optional)
                   </label>
                   <input
                     type="text"
                     value={cookieNickname}
                     onChange={(e) => setCookieNickname(e.target.value)}
-                    placeholder="My_FB_Cookies"
+                    placeholder="Auto-detect from FB"
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
                   />
                 </div>
@@ -641,9 +778,9 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
                     }
                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
                   >
+                    <option value="cookie_vault">Desktop Chrome</option>
                     <option value="mobile_app">Facebook Mobile App</option>
                     <option value="mobile_browser">Mobile Browser</option>
-                    <option value="cookie_vault">Desktop Chrome</option>
                   </select>
                 </div>
               </div>
@@ -651,14 +788,14 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <label className="text-[11px] font-medium text-slate-300">
-                    Facebook Cookies String *
+                    Facebook Cookies (Header / JSON / .txt) *
                   </label>
                   <label className="text-[11px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 cursor-pointer font-semibold">
                     <Upload className="w-3 h-3" />
-                    <span>Choose .txt File</span>
+                    <span>Choose .txt / .json</span>
                     <input
                       type="file"
-                      accept=".txt"
+                      accept=".txt,.json"
                       onChange={handleImportCookiesTxt}
                       className="hidden"
                     />
@@ -668,7 +805,7 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
                   rows={4}
                   value={cookiesInput}
                   onChange={(e) => setCookiesInput(e.target.value)}
-                  placeholder="datr=...; sb=...; c_user=61561547737841; xs=...;"
+                  placeholder="c_user=...; xs=...; datr=...; sb=... (or Cookie-Editor JSON export)"
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
                 />
               </div>
@@ -680,7 +817,7 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
                   onChange={(e) => setRememberCookies(e.target.checked)}
                   className="rounded border-slate-700 bg-slate-950 text-emerald-500 focus:ring-0"
                 />
-                <span>Cookies Vault me permanently save karein</span>
+                <span>Verify hone par vault me save karein</span>
               </label>
             </div>
           </div>
@@ -696,25 +833,25 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
             ) : (
               <Cookie className="w-3.5 h-3.5" />
             )}
-            <span>Login with Cookies &amp; Go to Content</span>
+            <span>{isCookiesBusy ? 'Checking Live Cookies...' : 'Verify Cookies & Go to Content'}</span>
           </button>
         </section>
 
-        {/* OPTION 3: Manual Chrome Profile Choose & Login */}
+        {/* OPTION 3: Real Chrome Profile Choose & Live CDP / Profile Cookie Verification */}
         <section className="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col justify-between gap-4">
           <div className="space-y-4">
             <div className="space-y-1">
               <div className="text-[11px] font-mono font-semibold text-amber-400">
-                Option 03 · Manual Chrome Profile
+                Option 03 · Live Chrome Profile Bridge
               </div>
               <h2 className="text-base font-bold text-white flex items-center gap-2">
                 <Chrome className="w-4 h-4 text-amber-400 shrink-0" />
-                <span>Choose Chrome Profile</span>
+                <span>Connect Real Chrome Profile</span>
               </h2>
             </div>
 
             <p className="text-xs text-slate-400 leading-relaxed">
-              Apne computer ka wo Chrome Profile choose karein jis mein Facebook pehle se login hai (`Default`, `Profile 1`, `Profile 2`, ya folder browse karein).
+              Apna Chrome Profile choose karein (live CDP Port <span className="font-mono text-slate-300">9222</span> ya Profile folder ke unencrypted cookies). Real logged-in Facebook session milne par hi aage badhega.
             </p>
 
             <div className="space-y-3">
@@ -738,7 +875,7 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
               {chromeProfilePreset === 'Custom' && (
                 <div>
                   <label className="block text-[11px] font-medium text-slate-300 mb-1">
-                    Custom Profile Name (e.g. Profile 5 / Work)
+                    Custom Profile Name
                   </label>
                   <input
                     type="text"
@@ -773,11 +910,16 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
                   placeholder="C:\Users\...\Google\Chrome\User Data"
                   className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-amber-500"
                 />
+                {chromeProfileEmailHint && (
+                  <p className="text-[11px] text-emerald-400 mt-1">
+                    Detected Chrome Account: {chromeProfileEmailHint}
+                  </p>
+                )}
               </div>
 
               <div>
                 <label className="block text-[11px] font-medium text-slate-300 mb-1">
-                  Chrome Debug Port (Optional)
+                  Chrome Remote Debug Port (Live Browser)
                 </label>
                 <input
                   type="text"
@@ -791,7 +933,7 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
               {savedSessions.length > 0 && (
                 <div className="pt-1 border-t border-slate-800/80">
                   <span className="text-[11px] text-slate-400 block mb-1.5">
-                    Saved Profiles (1-Click Continue):
+                    Verified Saved Accounts (Re-Verify &amp; Fetch Pages):
                   </span>
                   <div className="flex flex-wrap gap-1.5">
                     {savedSessions.slice(0, 3).map((s) => (
@@ -799,7 +941,7 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
                         key={s.id}
                         type="button"
                         onClick={() => handleQuickRestoreSaved(s)}
-                        className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-[11px] rounded-md cursor-pointer truncate max-w-[160px]"
+                        className="px-2.5 py-1 bg-slate-950 hover:bg-slate-800 border border-slate-800 text-slate-200 text-[11px] rounded-md cursor-pointer truncate max-w-[170px]"
                       >
                         {s.nickname}
                       </button>
@@ -821,23 +963,34 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
             ) : (
               <Chrome className="w-3.5 h-3.5" />
             )}
-            <span>Connect Chrome Profile &amp; Go to Content</span>
+            <span>
+              {isChromeBusy ? 'Verifying Chrome Session...' : 'Verify Chrome Profile & Go to Content'}
+            </span>
           </button>
         </section>
       </div>
 
-      {/* Facebook Mobile App Selector Section */}
+      {/* Facebook Official App Real OAuth & Token Connection Section */}
       <section className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h2 className="text-sm font-bold text-white flex items-center gap-2">
               <Smartphone className="w-4 h-4 text-blue-400 shrink-0" />
-              <span>Select Facebook Mobile App (Mobile App Direct Connect)</span>
+              <span>Facebook Official App Login &amp; Real Page Fetcher</span>
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Apne mobile par logged-in Facebook App select karein aur 1-click ya 6-digit Sync PIN ke zariye connect karein.
+              Same Official Facebook App (<span className="font-mono text-slate-300">com.facebook.katana</span>) se original OAuth login ya User Access Token verify karein — jab tak original Facebook account verify nahi hoga, koi dummy page add nahi hoga.
             </p>
           </div>
+
+          <button
+            type="button"
+            onClick={handleOfficialFacebookOAuth}
+            className="px-3.5 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 border border-blue-500/40 text-xs font-semibold rounded-lg cursor-pointer flex items-center gap-1.5 shrink-0 whitespace-nowrap"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+            <span>Open Official Facebook OAuth Login</span>
+          </button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
@@ -847,59 +1000,52 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
             </label>
             <select
               value={selectedMobileApp}
-              onChange={(e) =>
-                setSelectedMobileApp(
-                  e.target.value as 'fb_official' | 'fb_lite' | 'fb_mobile_web'
-                )
-              }
+              onChange={(e) => {
+                const val = e.target.value as 'fb_official' | 'fb_lite' | 'fb_mobile_web';
+                setSelectedMobileApp(val);
+                if (val === 'fb_official') setMobileAppNickname('Facebook Official App');
+                else if (val === 'fb_lite') setMobileAppNickname('Facebook Lite App');
+                else setMobileAppNickname('Facebook Mobile Browser');
+              }}
               className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-blue-500"
             >
-              <option value="fb_official">Facebook Official App (Android / iOS)</option>
-              <option value="fb_lite">Facebook Lite App</option>
+              <option value="fb_official">Facebook Official App (com.facebook.katana)</option>
+              <option value="fb_lite">Facebook Lite App (com.facebook.lite)</option>
               <option value="fb_mobile_web">Facebook Mobile Browser (m.facebook.com)</option>
             </select>
           </div>
 
           <div>
             <label className="block text-[11px] font-medium text-slate-300 mb-1">
-              Mobile Account Label
+              Meta App ID (For Official App OAuth)
             </label>
             <input
               type="text"
-              value={mobileAppNickname}
-              onChange={(e) => setMobileAppNickname(e.target.value)}
-              placeholder="My_Facebook_Mobile_App"
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-blue-500"
+              value={officialAppId}
+              onChange={(e) => setOfficialAppId(e.target.value)}
+              placeholder="e.g. 123456789012345"
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono tabular-nums text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
             />
           </div>
 
           <div>
-            <label className="block text-[11px] font-medium text-slate-300 mb-1">
-              Sync PIN (Auto or Manual)
+            <label className="block text-[11px] font-medium text-slate-300 mb-1 flex items-center gap-1">
+              <KeyRound className="w-3 h-3 text-blue-400" />
+              <span>Real FB User Access Token (Optional)</span>
             </label>
-            <div className="flex items-center gap-1.5">
-              <input
-                type="text"
-                value={mobileAppPin}
-                onChange={(e) => setMobileAppPin(e.target.value)}
-                placeholder="6-digit PIN"
-                className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono tabular-nums text-white tracking-widest focus:outline-none focus:border-blue-500"
-              />
-              <button
-                type="button"
-                onClick={handleGetMobileAppPin}
-                disabled={isMobileAppBusy}
-                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-blue-300 border border-slate-700 text-xs font-semibold rounded-lg cursor-pointer whitespace-nowrap shrink-0"
-              >
-                Get PIN
-              </button>
-            </div>
+            <input
+              type="password"
+              value={officialAccessToken}
+              onChange={(e) => setOfficialAccessToken(e.target.value)}
+              placeholder="EAAB... (from Facebook App / Explorer)"
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-blue-500"
+            />
           </div>
 
           <div>
             <button
               type="button"
-              onClick={handleConnectMobileApp}
+              onClick={() => handleConnectMobileApp(undefined, true)}
               disabled={isMobileAppBusy}
               className="w-full py-2 px-4 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
             >
@@ -908,7 +1054,9 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
               ) : (
                 <Smartphone className="w-3.5 h-3.5" />
               )}
-              <span>Connect Mobile App &amp; Go to Content</span>
+              <span>
+                {isMobileAppBusy ? 'Verifying on Facebook...' : 'Open App, Verify & Fetch Real Pages'}
+              </span>
             </button>
           </div>
         </div>

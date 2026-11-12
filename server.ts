@@ -4,6 +4,12 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import JSZip from 'jszip';
+import {
+  verifyFacebookCookiesLive,
+  performRealFacebookCredentialsLogin,
+  connectChromeProfileReal,
+  connectOfficialFacebookAppReal,
+} from './fbAuthEngine';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -32,31 +38,7 @@ function getStoredSessions(): SavedSessionRecord[] {
   } catch (err) {
     console.error('Error reading sessions_vault.json:', err);
   }
-  const initial: SavedSessionRecord[] = [
-    {
-      id: 'session-main-1',
-      nickname: 'BestYou_Personal_Profile',
-      c_user: '61561547737841',
-      source: 'system_chrome',
-      cookies:
-        'datr=z2Niau_VrYxapXvkjmDInemI; sb=z2NianZvQAhzQHGIE8qDKfpJ; c_user=61561547737841; xs=6%3AgKqgsWap84Fqfw%3A2%3A1784833381%3A-1%3A-1%3A%3AAcx92WMHlhPDATmFIp-VnWc3J6zQDfFhQharTGz0FA;',
-      accessToken: 'EAABwz9842a84920192849012849012ZDZD',
-      savedAt: new Date(Date.now() - 3600000 * 24 * 3).toISOString(),
-      lastUsed: new Date().toISOString(),
-      isActive: true,
-    },
-    {
-      id: 'session-mobile-2',
-      nickname: 'Mobile_FB_App_Sync',
-      c_user: '100084920194821',
-      source: 'mobile_app',
-      cookies:
-        'c_user=100084920194821; xs=4%3A5mYq932K:2:1784833381:-1:-1; datr=k9Wiauz_VrX;',
-      savedAt: new Date(Date.now() - 3600000 * 6).toISOString(),
-      lastUsed: new Date(Date.now() - 3600000 * 2).toISOString(),
-      isActive: false,
-    },
-  ];
+  const initial: SavedSessionRecord[] = [];
   try {
     fs.writeFileSync(SESSIONS_VAULT_FILE, JSON.stringify(initial, null, 2), 'utf-8');
   } catch {}
@@ -461,64 +443,71 @@ async function startServer() {
     res.json({ success: true, session: savedRecord, count: sessions.length });
   });
 
-  // Manual Username / Email / Phone & Password Facebook Login (saves persistent session)
-  app.post('/api/fb/manual-login', (req, res) => {
+  // REAL Option 1: Live Facebook Username / Email / Phone & Password Login via Chromium
+  app.post('/api/fb/manual-login', async (req, res) => {
     const { username, password, twoFactorCode, saveSession = true } = req.body || {};
     const cleanUser = typeof username === 'string' ? username.trim() : '';
     const cleanPass = typeof password === 'string' ? password : '';
 
-    if (!cleanUser || cleanPass.length < 4) {
+    if (!cleanUser || !cleanPass) {
       return res.status(400).json({
         success: false,
-        error: 'Valid Facebook Email, Phone, or Username aur Password (min 4 chars) enter karein.',
+        error: 'Facebook ID / Email / Phone aur Password dono enter karein.',
+      });
+    }
+
+    memoryLogs.push({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      level: 'INFO',
+      message: `Verifying live Facebook credentials for [${cleanUser}]...`,
+    });
+
+    const authResult = await performRealFacebookCredentialsLogin({
+      username: cleanUser,
+      password: cleanPass,
+      twoFactorCode: typeof twoFactorCode === 'string' ? twoFactorCode.trim() : undefined,
+    });
+
+    if (!authResult.success || !authResult.cUser || !authResult.cookies) {
+      memoryLogs.push({
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        level: 'WARN',
+        message: `Facebook ID/Password login rejected: ${authResult.error}`,
+      });
+      return res.status(401).json({
+        success: false,
+        requires2FA: Boolean(authResult.requires2FA),
+        checkpoint: Boolean(authResult.checkpoint),
+        error: authResult.error || 'Facebook login verify nahi ho saka.',
       });
     }
 
     const sessions = getStoredSessions();
-    const displayNick = cleanUser.includes('@')
-      ? cleanUser.split('@')[0]
-      : cleanUser.replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 24) || 'FB_User';
-
-    // Deterministic numeric c_user derivation from username when no explicit numeric ID given
-    let derivedNumeric = cleanUser.replace(/\D/g, '');
-    if (derivedNumeric.length < 8) {
-      let hash = 615615;
-      for (let i = 0; i < cleanUser.length; i++) {
-        hash = (hash * 31 + cleanUser.charCodeAt(i)) % 9000000000;
-      }
-      derivedNumeric = `615${String(Math.abs(hash)).padStart(11, '4').slice(0, 11)}`;
-    }
-
-    const existing = sessions.find(
-      (s) => s.nickname.toLowerCase() === displayNick.toLowerCase() || s.c_user === derivedNumeric
-    );
-
-    const syntheticCookie =
-      existing?.cookies ||
-      `datr=z2Niau_${Date.now().toString(36)}; sb=z2NianZv_${derivedNumeric.slice(-6)}; c_user=${derivedNumeric}; xs=6%3AgKqgsWap84Fqfw%3A2%3A${Math.floor(Date.now() / 1000)}%3A-1%3A-1;`;
-
+    const resolvedNick = authResult.profileName || cleanUser;
     sessions.forEach((s) => (s.isActive = false));
 
+    const existing = sessions.find((s) => s.c_user === authResult.cUser);
     let savedRecord: SavedSessionRecord;
     if (existing) {
       savedRecord = {
         ...existing,
-        nickname: displayNick,
+        nickname: resolvedNick,
         source: 'system_chrome',
-        cookies: syntheticCookie,
+        cookies: authResult.cookies,
         lastUsed: new Date().toISOString(),
         isActive: true,
       };
-      const idx = sessions.indexOf(existing);
-      sessions.splice(idx, 1);
+      sessions.splice(sessions.indexOf(existing), 1);
       sessions.unshift(savedRecord);
     } else {
       savedRecord = {
         id: `session-cred-${Date.now()}`,
-        nickname: displayNick,
-        c_user: derivedNumeric,
+        nickname: resolvedNick,
+        c_user: authResult.cUser,
         source: 'system_chrome',
-        cookies: syntheticCookie,
+        cookies: authResult.cookies,
         savedAt: new Date().toISOString(),
         lastUsed: new Date().toISOString(),
         isActive: true,
@@ -534,45 +523,163 @@ async function startServer() {
       id: `log-${Date.now()}`,
       timestamp: new Date().toISOString(),
       level: 'SUCCESS',
-      message: `Manual Facebook login verified for [${displayNick}]${
-        twoFactorCode ? ' (with 2FA)' : ''
-      }. Session ${saveSession ? 'saved permanently' : 'active for session'}.`,
+      message: `Real Facebook login verified for [${resolvedNick}] (c_user: ${authResult.cUser}). Fetched ${authResult.pages?.length || 0} real Page(s).`,
     });
 
-    res.json({ success: true, session: savedRecord });
+    return res.json({
+      success: true,
+      session: savedRecord,
+      pages: authResult.pages || [],
+    });
   });
 
-  // Manual Chrome Profile Selection Login (saves persistent Chrome profile session)
+  // REAL Option 2: Live Facebook Cookie Verification & Page Fetching
+  app.post('/api/fb/cookies-login', async (req, res) => {
+    const {
+      cookies,
+      nickname,
+      source = 'cookie_vault',
+      saveSession = true,
+    } = req.body || {};
+
+    if (!cookies || typeof cookies !== 'string' || !cookies.trim()) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid Facebook cookies (c_user aur xs) enter karein ya .txt/.json file upload karein.',
+      });
+    }
+
+    memoryLogs.push({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      level: 'INFO',
+      message: 'Validating Facebook cookies against live facebook.com...',
+    });
+
+    const verified = await verifyFacebookCookiesLive(cookies);
+    if (!verified.success || !verified.cUser || !verified.cookies) {
+      memoryLogs.push({
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        level: 'WARN',
+        message: `Cookie verification rejected by Facebook: ${verified.error}`,
+      });
+      return res.status(401).json({
+        success: false,
+        checkpoint: Boolean(verified.checkpoint),
+        error: verified.error || 'Facebook cookies expired ya invalid hain.',
+      });
+    }
+
+    const sessions = getStoredSessions();
+    const resolvedNick =
+      (typeof nickname === 'string' && nickname.trim()) ||
+      verified.profileName ||
+      `FB_${verified.cUser.slice(-6)}`;
+    const validSource: SavedSessionRecord['source'] =
+      source === 'mobile_app' || source === 'mobile_browser' || source === 'system_chrome'
+        ? source
+        : 'cookie_vault';
+
+    sessions.forEach((s) => (s.isActive = false));
+    const existing = sessions.find((s) => s.c_user === verified.cUser);
+
+    let savedRecord: SavedSessionRecord;
+    if (existing) {
+      savedRecord = {
+        ...existing,
+        nickname: resolvedNick,
+        source: validSource,
+        cookies: verified.cookies,
+        lastUsed: new Date().toISOString(),
+        isActive: true,
+      };
+      sessions.splice(sessions.indexOf(existing), 1);
+      sessions.unshift(savedRecord);
+    } else {
+      savedRecord = {
+        id: `session-cookie-${Date.now()}`,
+        nickname: resolvedNick,
+        c_user: verified.cUser,
+        source: validSource,
+        cookies: verified.cookies,
+        savedAt: new Date().toISOString(),
+        lastUsed: new Date().toISOString(),
+        isActive: true,
+      };
+      sessions.unshift(savedRecord);
+    }
+
+    if (saveSession) {
+      writeStoredSessions(sessions);
+    }
+
+    memoryLogs.push({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      level: 'SUCCESS',
+      message: `Live Facebook cookies verified for [${resolvedNick}] (c_user: ${verified.cUser}). Fetched ${verified.pages?.length || 0} real Page(s).`,
+    });
+
+    return res.json({
+      success: true,
+      session: savedRecord,
+      pages: verified.pages || [],
+    });
+  });
+
+  // REAL Option 3: Chrome Profile Login via CDP Port / Profile Folder Cookies / Live Verification
   app.post('/api/fb/chrome-profile-login', async (req, res) => {
-    const { profileDirectory = 'Default', userDataPath = '', port = '9222' } = req.body || {};
+    const {
+      profileDirectory = 'Default',
+      userDataPath = '',
+      port = '9222',
+      uploadedCookiesText,
+      uploadedCookiesDbBase64,
+    } = req.body || {};
+
     const cleanProfile = String(profileDirectory || 'Default').trim();
     const cleanPort = String(port || '9222').trim();
 
-    let portConnected = false;
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 1200);
-      const checkRes = await fetch(`http://127.0.0.1:${cleanPort}/json/version`, {
-        signal: controller.signal,
-      }).catch(() => null);
-      clearTimeout(timeout);
-      portConnected = Boolean(checkRes && checkRes.ok);
-    } catch {}
+    memoryLogs.push({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      level: 'INFO',
+      message: `Checking real Chrome profile [${cleanProfile}] (port ${cleanPort}) for active Facebook login...`,
+    });
+
+    const result = await connectChromeProfileReal({
+      profileDirectory: cleanProfile,
+      userDataPath: typeof userDataPath === 'string' ? userDataPath.trim() : '',
+      port: cleanPort,
+      uploadedCookiesText: typeof uploadedCookiesText === 'string' ? uploadedCookiesText : undefined,
+      uploadedCookiesDbBase64:
+        typeof uploadedCookiesDbBase64 === 'string' ? uploadedCookiesDbBase64 : undefined,
+    });
+
+    if (!result.success || !result.cUser || !result.cookies) {
+      memoryLogs.push({
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        level: 'WARN',
+        message: `Chrome profile check: ${result.error}`,
+      });
+      return res.status(401).json({
+        success: false,
+        chromeOpenedForLogin: Boolean(result.chromeOpenedForLogin),
+        error:
+          result.error ||
+          `Chrome profile [${cleanProfile}] me active verified Facebook session nahi mili.`,
+      });
+    }
 
     const sessions = getStoredSessions();
-    const nickLabel = `Chrome (${cleanProfile})`;
-
-    let hash = 615615;
-    for (let i = 0; i < cleanProfile.length; i++) {
-      hash = (hash * 31 + cleanProfile.charCodeAt(i)) % 9000000000;
-    }
-    const derivedNumeric = `615${String(Math.abs(hash)).padStart(11, '8').slice(0, 11)}`;
-
-    const existing = sessions.find(
-      (s) => s.nickname.toLowerCase() === nickLabel.toLowerCase() || s.c_user === derivedNumeric
-    );
+    const nickLabel = result.profileName
+      ? `${result.profileName} (${cleanProfile})`
+      : `Chrome (${cleanProfile})`;
 
     sessions.forEach((s) => (s.isActive = false));
+    const existing = sessions.find((s) => s.c_user === result.cUser);
 
     let savedRecord: SavedSessionRecord;
     if (existing) {
@@ -580,19 +687,19 @@ async function startServer() {
         ...existing,
         nickname: nickLabel,
         source: 'system_chrome',
+        cookies: result.cookies,
         lastUsed: new Date().toISOString(),
         isActive: true,
       };
-      const idx = sessions.indexOf(existing);
-      sessions.splice(idx, 1);
+      sessions.splice(sessions.indexOf(existing), 1);
       sessions.unshift(savedRecord);
     } else {
       savedRecord = {
         id: `session-chrome-${Date.now()}`,
         nickname: nickLabel,
-        c_user: derivedNumeric,
+        c_user: result.cUser,
         source: 'system_chrome',
-        cookies: `datr=chrome_${Date.now().toString(36)}; c_user=${derivedNumeric}; chrome_profile=${encodeURIComponent(cleanProfile)};`,
+        cookies: result.cookies,
         savedAt: new Date().toISOString(),
         lastUsed: new Date().toISOString(),
         isActive: true,
@@ -606,12 +713,144 @@ async function startServer() {
       id: `log-${Date.now()}`,
       timestamp: new Date().toISOString(),
       level: 'SUCCESS',
-      message: `Selected Chrome Profile [${cleanProfile}]${
-        userDataPath ? ` (${userDataPath})` : ''
-      }${portConnected ? ` · Live Port ${cleanPort}` : ''}. Session saved permanently.`,
+      message: `Verified real Facebook login from Chrome Profile [${cleanProfile}] (c_user: ${result.cUser}). Fetched ${result.pages?.length || 0} real Page(s).`,
     });
 
-    res.json({ success: true, portConnected, session: savedRecord });
+    return res.json({
+      success: true,
+      portConnected: true,
+      session: savedRecord,
+      pages: result.pages || [],
+    });
+  });
+
+  // REAL Official Facebook App Login & Page Fetching (Token / OAuth / Verified Live Session Only)
+  app.post('/api/fb/mobile-app/connect', async (req, res) => {
+    const {
+      appType = 'fb_official',
+      appPackage = 'com.facebook.katana',
+      appLabel = 'Facebook Official App',
+      nickname,
+      pin,
+      accessToken,
+      cookies,
+    } = req.body || {};
+
+    let effectiveCookies = typeof cookies === 'string' && cookies.trim() ? cookies.trim() : '';
+    let effectiveToken = typeof accessToken === 'string' && accessToken.trim() ? accessToken.trim() : '';
+
+    // If Mobile Sync PIN provided, claim its verified session from memory store
+    if (pin && typeof pin === 'string' && pin.trim()) {
+      const item = mobileSyncStore.get(pin.trim());
+      if (item && Date.now() <= item.expiresAt) {
+        effectiveCookies = item.session.cookies || effectiveCookies;
+        effectiveToken = item.session.accessToken || effectiveToken;
+      }
+    }
+
+    // If user didn't pass fresh token/cookies, check active verified session in vault (never fallback to fake data)
+    if (!effectiveToken && !effectiveCookies) {
+      const sessions = getStoredSessions();
+      const activeSess = sessions.find((s) => s.isActive);
+      if (activeSess) {
+        effectiveCookies = activeSess.cookies || '';
+        effectiveToken = activeSess.accessToken || '';
+      }
+    }
+
+    if (!effectiveToken && !effectiveCookies) {
+      return res.status(401).json({
+        success: false,
+        requiresAuth: true,
+        error:
+          'Abhi koi verified Facebook session ya Official Access Token active nahi hai. Pehle "Login with Facebook Official OAuth", User Access Token, ya Option 1/2/3 se real Facebook account verify karein.',
+      });
+    }
+
+    memoryLogs.push({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      level: 'INFO',
+      message: `Verifying real Facebook session & fetching real Pages for [${appLabel}] (${appPackage})...`,
+    });
+
+    const authResult = await connectOfficialFacebookAppReal({
+      accessToken: effectiveToken,
+      cookies: effectiveCookies,
+    });
+
+    if (!authResult.success || !authResult.cUser) {
+      memoryLogs.push({
+        id: `log-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        level: 'WARN',
+        message: `Facebook Official App verification failed: ${authResult.error}`,
+      });
+      return res.status(401).json({
+        success: false,
+        requiresAuth: true,
+        error:
+          authResult.error ||
+          'Facebook Official App session verify nahi ho saki. Fresh token ya live login verify karein.',
+      });
+    }
+
+    const sessions = getStoredSessions();
+    const resolvedNickname =
+      (typeof nickname === 'string' && nickname.trim() && nickname.trim() !== 'Facebook Official App'
+        ? nickname.trim()
+        : authResult.profileName) || appLabel;
+    const sourceVal: SavedSessionRecord['source'] =
+      appType === 'fb_mobile_web' ? 'mobile_browser' : 'mobile_app';
+
+    sessions.forEach((s) => (s.isActive = false));
+    const existing = sessions.find((s) => s.c_user === authResult.cUser);
+
+    let savedRecord: SavedSessionRecord;
+    if (existing) {
+      savedRecord = {
+        ...existing,
+        nickname: resolvedNickname,
+        c_user: authResult.cUser,
+        source: sourceVal,
+        cookies: authResult.cookies || existing.cookies || '',
+        accessToken: authResult.accessToken || existing.accessToken,
+        lastUsed: new Date().toISOString(),
+        isActive: true,
+      };
+      sessions.splice(sessions.indexOf(existing), 1);
+      sessions.unshift(savedRecord);
+    } else {
+      savedRecord = {
+        id: `session-app-${Date.now()}`,
+        nickname: resolvedNickname,
+        c_user: authResult.cUser,
+        source: sourceVal,
+        cookies: authResult.cookies || '',
+        accessToken: authResult.accessToken,
+        savedAt: new Date().toISOString(),
+        lastUsed: new Date().toISOString(),
+        isActive: true,
+      };
+      sessions.unshift(savedRecord);
+    }
+
+    writeStoredSessions(sessions);
+
+    const realPages = authResult.pages || [];
+    memoryLogs.push({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      level: 'SUCCESS',
+      message: `Verified [${appLabel}] (${resolvedNickname} · ID ${authResult.cUser}). Fetched ${realPages.length} REAL Facebook Page(s).`,
+    });
+
+    return res.json({
+      success: true,
+      session: savedRecord,
+      pages: realPages,
+      usedGraphApi: Boolean(authResult.accessToken),
+    });
   });
 
   // Get & update Human Behavior Configuration
@@ -2042,28 +2281,48 @@ class MultiAccountProApp:
     def login_tab_mobile_app_connect(self):
         app_choice = self.combo_mobile_app.get().strip() or "Facebook Official App"
         pin_val = self.entry_mobile_app_pin.get().strip()
-        if pin_val:
+        app_type = "fb_mobile_web" if "Browser" in app_choice else ("fb_lite" if "Lite" in app_choice else "fb_official")
+        app_pkg = "m.facebook.com" if app_type == "fb_mobile_web" else ("com.facebook.lite" if app_type == "fb_lite" else "com.facebook.katana")
+
+        def mobile_worker():
             try:
-                url = "http://127.0.0.1:3000/api/fb/mobile-sync/claim"
+                url = "http://127.0.0.1:3000/api/fb/mobile-app/connect"
                 payload = json.dumps({
-                    "pin": pin_val,
+                    "appType": app_type,
+                    "appPackage": app_pkg,
+                    "appLabel": app_choice,
                     "nickname": app_choice,
-                    "source": "mobile_browser" if "Browser" in app_choice else "mobile_app"
+                    "pin": pin_val or None
                 }).encode("utf-8")
                 req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     data = json.loads(resp.read().decode())
                     if data.get("success") and data.get("session"):
                         sess = data["session"]
-                        self.txt_accounts.delete("1.0", tk.END)
-                        self.txt_accounts.insert(tk.END, sess.get("cookies", "") + "\\n")
-                        self.entry_profile_name.delete(0, tk.END)
-                        self.entry_profile_name.insert(0, sess.get("nickname", app_choice))
-                        self.save_current_session_to_vault_gui()
+                        pages = data.get("pages", [])
+                        slot_dt = datetime.fromtimestamp(time.time() + 180)
+                        curr_d = slot_dt.strftime("%Y-%m-%d")
+                        curr_t = slot_dt.strftime("%H:%M")
+
+                        def apply_ui():
+                            self.txt_accounts.delete("1.0", tk.END)
+                            self.txt_accounts.insert(tk.END, sess.get("cookies", "") + "\\n")
+                            self.entry_profile_name.delete(0, tk.END)
+                            self.entry_profile_name.insert(0, sess.get("nickname", app_choice))
+                            for p in pages:
+                                p_name = p.get("name", app_choice)
+                                self.tree.insert("", tk.END, values=(p_name, "Page", "Not Assigned", f"Trending on {p_name} #fbreels", curr_d, curr_t, "Browse", "Remove"))
+                            self.save_current_session_to_vault_gui()
+                            self.notebook.select(self.tab_content)
+                            self.log_message(f"Mobile App [{app_choice}] added & {len(pages)} Page(s) attached to Content.")
+
+                        self.root.after(0, apply_ui)
                         return
             except Exception as e:
                 self.log_message(f"Mobile app sync note: {str(e)}")
-        self.dialog_claim_mobile_pin()
+            self.root.after(0, self.dialog_claim_mobile_pin)
+
+        threading.Thread(target=mobile_worker, daemon=True).start()
 
     def inject_saved_cookies(self, driver):
         """Inject active saved cookies into Chrome session so Facebook loads already signed in"""

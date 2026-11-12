@@ -69,11 +69,10 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
   onLog,
 }) => {
   const [rawCookiesText, setRawCookiesText] = useState(
-    activeSession?.cookies ||
-      'datr=z2Niau_VrYxapXvkjmDInemI; sb=z2NianZvQAhzQHGIE8qDKfpJ; c_user=61561547737841; xs=6%3AgKqgsWap84Fqfw%3A2%3A1784833381%3A-1%3A-1%3A%3AAcx92WMHlhPDATmFIp-VnWc3J6zQDfFhQharTGz0FA;'
+    activeSession?.cookies || ''
   );
   const [profileNickname, setProfileNickname] = useState(
-    activeSession?.nickname || 'BestYou_Brand_1'
+    activeSession?.nickname || ''
   );
   const [adsPowerPort, setAdsPowerPort] = useState('9222');
   const [isGeneratingToken, setIsGeneratingToken] = useState(false);

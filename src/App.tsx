@@ -9,12 +9,7 @@ import { PythonFixTab } from './components/PythonFixTab';
 import { DownloadAppTab } from './components/DownloadAppTab';
 import { RpaSimulationModal } from './components/RpaSimulationModal';
 import { MediaPreviewModal } from './components/MediaPreviewModal';
-import {
-  INITIAL_ACCOUNTS,
-  INITIAL_TARGETS,
-  SAMPLE_LOGS,
-  SAMPLE_VIDEOS,
-} from './data/initialData';
+import { SAMPLE_VIDEOS } from './data/initialData';
 import {
   AccountItem,
   FbApiConfig,
@@ -42,10 +37,10 @@ export default function App() {
     'accounts' | 'login' | 'content' | 'scheduler' | 'terminal' | 'python' | 'download'
   >('login');
 
-  // Accounts state
-  const [accounts, setAccounts] = useState<AccountItem[]>(INITIAL_ACCOUNTS);
+  // Accounts state (populated from verified saved sessions or AccountsTab)
+  const [accounts, setAccounts] = useState<AccountItem[]>([]);
 
-  // Persistent Active Saved Session ("Save Once, Never Log In Again")
+  // Persistent Active Saved Session
   const [activeSession, setActiveSession] = useState<SavedSession | null>(() => {
     try {
       const cached = localStorage.getItem('fb_active_session');
@@ -65,21 +60,41 @@ export default function App() {
     }
   });
 
-  // Targets state
-  const [targets, setTargets] = useState<TargetItem[]>(INITIAL_TARGETS);
+  // Targets state (persisted locally + populated by real fetched pages or manual entry)
+  const [targets, setTargets] = useState<TargetItem[]>(() => {
+    try {
+      const cached = localStorage.getItem('fb_content_targets');
+      return cached ? JSON.parse(cached) : [];
+    } catch {
+      return [];
+    }
+  });
 
   // Deleted stack for Ctrl+Z undo
   const [deletedStack, setDeletedStack] = useState<TargetItem[]>([]);
 
   // Logs state
-  const [logs, setLogs] = useState<SystemLog[]>(SAMPLE_LOGS);
+  const [logs, setLogs] = useState<SystemLog[]>([
+    {
+      id: 'log-boot',
+      timestamp: new Date().toISOString(),
+      level: 'INFO',
+      message: 'Live Facebook Session & Page Verification Engine ready.',
+    },
+  ]);
 
-  // Facebook Graph API credentials
-  const [fbConfig, setFbConfig] = useState<FbApiConfig>({
-    appId: '10849201948201',
-    appSecret: '••••••••••••••••••••••••••••••••',
-    accessToken: 'EAABwz9842a84920192849012849012ZDZD',
-    isValid: true,
+  // Facebook Graph API credentials (only user-supplied real credentials)
+  const [fbConfig, setFbConfig] = useState<FbApiConfig>(() => {
+    try {
+      const cached = localStorage.getItem('fb_api_config');
+      if (cached) return JSON.parse(cached);
+    } catch {}
+    return {
+      appId: '',
+      appSecret: '',
+      accessToken: '',
+      isValid: false,
+    };
   });
 
   // Background scheduler engine state
@@ -209,12 +224,81 @@ export default function App() {
     } catch {}
   };
 
-  // Startup Auto-Restore: Load saved session & human config automatically ("Save Once, Never Log In Again")
+  // Persist targets & fbConfig locally
+  useEffect(() => {
+    try {
+      localStorage.setItem('fb_content_targets', JSON.stringify(targets));
+    } catch {}
+  }, [targets]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('fb_api_config', JSON.stringify(fbConfig));
+    } catch {}
+  }, [fbConfig]);
+
+  // Startup Auto-Restore + Facebook Official OAuth redirect handler (#access_token=...)
   useEffect(() => {
     let mounted = true;
 
     const bootstrapState = async () => {
       try {
+        // Check if returning from real Facebook Official OAuth login
+        const hashStr = window.location.hash ? window.location.hash.replace(/^#/, '') : '';
+        const hashParams = new URLSearchParams(hashStr);
+        const oauthAccessToken = hashParams.get('access_token');
+
+        if (oauthAccessToken) {
+          window.history.replaceState(null, '', window.location.pathname + window.location.search);
+          handleLog('INFO', 'Received real Facebook Official OAuth token — verifying account & fetching Pages...');
+          const res = await fetch('/api/fb/mobile-app/connect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              appType: 'fb_official',
+              appPackage: 'com.facebook.katana',
+              appLabel: 'Facebook Official App (OAuth)',
+              accessToken: oauthAccessToken,
+            }),
+          }).then((r) => r.json()).catch(() => null);
+
+          if (!mounted) return;
+          if (res?.success && res.session) {
+            handleSessionChanged(res.session);
+            setFbConfig((prev) => ({ ...prev, accessToken: oauthAccessToken, isValid: true }));
+            if (Array.isArray(res.pages) && res.pages.length > 0) {
+              const dt = new Date(Date.now() + 3 * 60 * 1000);
+              const dateStr = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+              const timeStr = `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+              const realTargets: TargetItem[] = res.pages.map((p: any, idx: number) => {
+                const sample = SAMPLE_VIDEOS[idx % SAMPLE_VIDEOS.length];
+                return {
+                  id: `target-oauth-${Date.now()}-${p.id || idx}`,
+                  profileName: p.name,
+                  type: 'Page',
+                  pageId: p.id,
+                  pageToken: p.pageToken || oauthAccessToken,
+                  pageUrl: p.link || `https://facebook.com/${p.id}`,
+                  videoPath: sample.path,
+                  videoName: sample.name,
+                  mediaType: 'video',
+                  caption: `Post for ${p.name}`,
+                  date: dateStr,
+                  time: timeStr,
+                  status: 'pending',
+                  createdAt: new Date().toISOString(),
+                };
+              });
+              setTargets((prev) => [...realTargets, ...prev]);
+              showToast(`Official Facebook Login Verified · ${realTargets.length} Page(s) Attached!`);
+            } else {
+              showToast(`Logged in via Facebook Official OAuth (${res.session.nickname})!`);
+            }
+            setActiveTab('content');
+            return;
+          }
+        }
+
         const [sessionsRes, humanRes] = await Promise.all([
           fetch('/api/fb/saved-sessions').then((r) => r.json()).catch(() => null),
           fetch('/api/fb/human-config').then((r) => r.json()).catch(() => null),
@@ -231,6 +315,18 @@ export default function App() {
         }
 
         if (sessionsRes?.success && Array.isArray(sessionsRes.sessions) && sessionsRes.sessions.length > 0) {
+          setAccounts(
+            sessionsRes.sessions.map((s: SavedSession) => ({
+              id: `acc-vault-${s.c_user}`,
+              nickname: s.nickname,
+              c_user: s.c_user,
+              rawCookie: s.cookies,
+              status: s.isActive ? 'active' : 'verified',
+              pagesCount: 0,
+              addedAt: new Date(s.savedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              lastVerified: 'Vault Session',
+            }))
+          );
           const preferredId = localStorage.getItem('fb_active_session_id');
           const restored: SavedSession =
             sessionsRes.sessions.find((s: SavedSession) => s.id === preferredId) ||
@@ -241,13 +337,11 @@ export default function App() {
             handleSessionChanged(restored);
             handleLog(
               'SUCCESS',
-              `Auto-restored saved session [${restored.nickname}] (c_user: ${restored.c_user}) from persistent vault. No re-login needed.`
+              `Restored saved session [${restored.nickname}] (c_user: ${restored.c_user}).`
             );
           }
         }
-      } catch {
-        // Fallback to localStorage cached session if server unreachable
-      }
+      } catch {}
     };
 
     bootstrapState();
@@ -383,70 +477,114 @@ export default function App() {
     }
   };
 
-  // Auto-fetch pages from browser login simulation / persistent profile
-  const handleAutoFetchPages = (profileNickname: string) => {
-    const activeNick = profileNickname.trim() || activeSession?.nickname || 'Main_FB_Profile';
-    handleLog('INFO', `Launching persistent Chrome profile [${activeNick}] (auto-login saved)...`);
-    handleLog('RPA', 'Navigating to facebook.com/pages/?category=your_pages to fetch managed pages...');
+  // Auto-fetch REAL pages from active verified session or access token
+  const handleAutoFetchPages = async (profileNickname: string) => {
+    const activeNick = profileNickname.trim() || activeSession?.nickname || 'Active Profile';
+    handleLog('INFO', `Fetching real managed Facebook Pages for [${activeNick}]...`);
+    try {
+      const res = await fetch('/api/fb/mobile-app/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appType: 'fb_official',
+          nickname: activeNick,
+          accessToken: activeSession?.accessToken || fbConfig.accessToken || undefined,
+          cookies: activeSession?.cookies || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Real Facebook login verified nahi hai.');
+      }
 
-    setTimeout(() => {
-      const todayStr = new Date().toISOString().split('T')[0];
-      const newDiscoveredTargets: TargetItem[] = [
-        {
-          id: `target-${Date.now()}-1`,
-          profileName: `${activeNick} - Deals Official`,
+      const pages = Array.isArray(data.pages) ? data.pages : [];
+      if (pages.length === 0) {
+        showToast('Login verified, lekin is account par koi Facebook Page nahi mila.');
+        setActiveTab('content');
+        return;
+      }
+
+      const dt = new Date(Date.now() + 3 * 60 * 1000);
+      const dateStr = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+      const timeStr = `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+      const discovered: TargetItem[] = pages.map((p: any, idx: number) => {
+        const sample = SAMPLE_VIDEOS[idx % SAMPLE_VIDEOS.length];
+        return {
+          id: `target-real-${Date.now()}-${p.id || idx}`,
+          profileName: p.name,
           type: 'Page',
-          pageId: '10849201948201',
-          pageToken: activeSession?.accessToken || fbConfig.accessToken || undefined,
-          videoPath: SAMPLE_VIDEOS[0].path,
-          videoName: SAMPLE_VIDEOS[0].name,
-          caption: 'Check out this trending product! Link in bio. #viral #shop',
-          date: todayStr,
-          time: '14:30',
+          pageId: p.id,
+          pageToken: p.pageToken || activeSession?.accessToken || fbConfig.accessToken || undefined,
+          pageUrl: p.link || `https://facebook.com/${p.id}`,
+          videoPath: sample.path,
+          videoName: sample.name,
+          mediaType: 'video',
+          caption: `Update on ${p.name}`,
+          date: dateStr,
+          time: timeStr,
           status: 'pending',
           createdAt: new Date().toISOString(),
-        },
-        {
-          id: `target-${Date.now()}-2`,
-          profileName: `${activeNick} - Video Creators Hub`,
-          type: 'Page',
-          pageId: '1984029482019',
-          pageToken: activeSession?.accessToken || fbConfig.accessToken || undefined,
-          videoPath: SAMPLE_VIDEOS[1].path,
-          videoName: SAMPLE_VIDEOS[1].name,
-          caption: 'Daily motivational reel for digital creators! #fbreels #creator',
-          date: todayStr,
-          time: '16:00',
-          status: 'pending',
-          createdAt: new Date().toISOString(),
-        },
-      ];
+        };
+      });
 
-      setTargets((prev) => [...prev, ...newDiscoveredTargets]);
-      handleLog(
-        'SUCCESS',
-        `Successfully auto-fetched 2 Facebook Pages from persistent profile [${activeNick}]. Added to Content Setup table!`
-      );
-      showToast(`Fetched 2 Pages for ${activeNick}!`);
+      setTargets((prev) => [...discovered, ...prev]);
+      handleLog('SUCCESS', `Fetched ${discovered.length} REAL Facebook Page(s) for [${activeNick}].`);
+      showToast(`Fetched ${discovered.length} Real Page(s)!`);
       setActiveTab('content');
-    }, 1200);
+    } catch (err: any) {
+      handleLog('WARN', `Fetch real pages: ${err.message}`);
+      showToast(err.message);
+    }
   };
 
-  // 1-Click Verify All Accounts
-  const handleVerifyAllAccounts = () => {
-    handleLog('INFO', 'Starting 1-Click Verification of all loaded accounts...');
-    setTimeout(() => {
-      setAccounts((prev) =>
-        prev.map((acc) => ({
-          ...acc,
-          status: 'active',
-          lastVerified: 'Just now',
-        }))
-      );
-      handleLog('SUCCESS', `Verified ${accounts.length} accounts. Moving to Content & Media section...`);
-      showToast(`Verified ${accounts.length} accounts! Moving to Content section...`);
+  // 1-Click Live Verify All Accounts against Facebook
+  const handleVerifyAllAccounts = async () => {
+    if (accounts.length === 0) {
+      showToast('Koi account loaded nahi hai. Pehle Login tab se real login verify karein.');
+      return;
+    }
+    handleLog('INFO', `Starting live Facebook verification for ${accounts.length} loaded account(s)...`);
+
+    let verifiedCount = 0;
+    const updatedList: AccountItem[] = [];
+    for (const acc of accounts) {
+      try {
+        const res = await fetch('/api/fb/cookies-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cookies: acc.rawCookie,
+            nickname: acc.nickname,
+            saveSession: true,
+          }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          verifiedCount++;
+          updatedList.push({
+            ...acc,
+            nickname: data.session?.nickname || acc.nickname,
+            pagesCount: Array.isArray(data.pages) ? data.pages.length : acc.pagesCount,
+            status: 'active',
+            lastVerified: 'Live Verified',
+          });
+        } else {
+          updatedList.push({ ...acc, status: 'expired', lastVerified: 'Expired / Invalid' });
+        }
+      } catch {
+        updatedList.push({ ...acc, status: 'expired', lastVerified: 'Check Failed' });
+      }
+    }
+
+    setAccounts(updatedList);
+    if (verifiedCount > 0) {
+      handleLog('SUCCESS', `Live verified ${verifiedCount}/${accounts.length} account(s). Moving to Content...`);
+      showToast(`Verified ${verifiedCount} real account(s)! Moving to Content...`);
       setActiveTab('content');
-    }, 800);
+    } else {
+      handleLog('WARN', '0 accounts passed live Facebook verification (cookies expired or invalid).');
+      showToast('Koi bhi account verify nahi ho saka — fresh login/cookies enter karein.');
+    }
   };
 
   // Complete RPA & Auto-cleanup row
@@ -499,6 +637,19 @@ export default function App() {
             onAddTargetDirect={(newTarget) => {
               setTargets((prev) => [...prev, newTarget]);
               showToast(`Added target [${newTarget.profileName}]!`);
+            }}
+            onAttachPagesDirect={(fetchedPages) => {
+              if (!fetchedPages || fetchedPages.length === 0) return;
+              setTargets((prev) => {
+                const existingKeys = new Set(
+                  prev.map((t) => `${t.pageId || ''}:${t.profileName.toLowerCase()}`)
+                );
+                const uniqueNew = fetchedPages.filter(
+                  (p) => !existingKeys.has(`${p.pageId || ''}:${p.profileName.toLowerCase()}`)
+                );
+                return [...uniqueNew, ...prev];
+              });
+              showToast(`Fetched ${fetchedPages.length} Page(s) & attached to Content!`);
             }}
             onGoToContent={() => setActiveTab('content')}
             onGoToAccounts={() => setActiveTab('accounts')}
