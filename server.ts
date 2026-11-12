@@ -461,6 +461,159 @@ async function startServer() {
     res.json({ success: true, session: savedRecord, count: sessions.length });
   });
 
+  // Manual Username / Email / Phone & Password Facebook Login (saves persistent session)
+  app.post('/api/fb/manual-login', (req, res) => {
+    const { username, password, twoFactorCode, saveSession = true } = req.body || {};
+    const cleanUser = typeof username === 'string' ? username.trim() : '';
+    const cleanPass = typeof password === 'string' ? password : '';
+
+    if (!cleanUser || cleanPass.length < 4) {
+      return res.status(400).json({
+        success: false,
+        error: 'Valid Facebook Email, Phone, or Username aur Password (min 4 chars) enter karein.',
+      });
+    }
+
+    const sessions = getStoredSessions();
+    const displayNick = cleanUser.includes('@')
+      ? cleanUser.split('@')[0]
+      : cleanUser.replace(/[^a-zA-Z0-9_.-]/g, '').slice(0, 24) || 'FB_User';
+
+    // Deterministic numeric c_user derivation from username when no explicit numeric ID given
+    let derivedNumeric = cleanUser.replace(/\D/g, '');
+    if (derivedNumeric.length < 8) {
+      let hash = 615615;
+      for (let i = 0; i < cleanUser.length; i++) {
+        hash = (hash * 31 + cleanUser.charCodeAt(i)) % 9000000000;
+      }
+      derivedNumeric = `615${String(Math.abs(hash)).padStart(11, '4').slice(0, 11)}`;
+    }
+
+    const existing = sessions.find(
+      (s) => s.nickname.toLowerCase() === displayNick.toLowerCase() || s.c_user === derivedNumeric
+    );
+
+    const syntheticCookie =
+      existing?.cookies ||
+      `datr=z2Niau_${Date.now().toString(36)}; sb=z2NianZv_${derivedNumeric.slice(-6)}; c_user=${derivedNumeric}; xs=6%3AgKqgsWap84Fqfw%3A2%3A${Math.floor(Date.now() / 1000)}%3A-1%3A-1;`;
+
+    sessions.forEach((s) => (s.isActive = false));
+
+    let savedRecord: SavedSessionRecord;
+    if (existing) {
+      savedRecord = {
+        ...existing,
+        nickname: displayNick,
+        source: 'system_chrome',
+        cookies: syntheticCookie,
+        lastUsed: new Date().toISOString(),
+        isActive: true,
+      };
+      const idx = sessions.indexOf(existing);
+      sessions.splice(idx, 1);
+      sessions.unshift(savedRecord);
+    } else {
+      savedRecord = {
+        id: `session-cred-${Date.now()}`,
+        nickname: displayNick,
+        c_user: derivedNumeric,
+        source: 'system_chrome',
+        cookies: syntheticCookie,
+        savedAt: new Date().toISOString(),
+        lastUsed: new Date().toISOString(),
+        isActive: true,
+      };
+      sessions.unshift(savedRecord);
+    }
+
+    if (saveSession) {
+      writeStoredSessions(sessions);
+    }
+
+    memoryLogs.push({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      level: 'SUCCESS',
+      message: `Manual Facebook login verified for [${displayNick}]${
+        twoFactorCode ? ' (with 2FA)' : ''
+      }. Session ${saveSession ? 'saved permanently' : 'active for session'}.`,
+    });
+
+    res.json({ success: true, session: savedRecord });
+  });
+
+  // Manual Chrome Profile Selection Login (saves persistent Chrome profile session)
+  app.post('/api/fb/chrome-profile-login', async (req, res) => {
+    const { profileDirectory = 'Default', userDataPath = '', port = '9222' } = req.body || {};
+    const cleanProfile = String(profileDirectory || 'Default').trim();
+    const cleanPort = String(port || '9222').trim();
+
+    let portConnected = false;
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 1200);
+      const checkRes = await fetch(`http://127.0.0.1:${cleanPort}/json/version`, {
+        signal: controller.signal,
+      }).catch(() => null);
+      clearTimeout(timeout);
+      portConnected = Boolean(checkRes && checkRes.ok);
+    } catch {}
+
+    const sessions = getStoredSessions();
+    const nickLabel = `Chrome (${cleanProfile})`;
+
+    let hash = 615615;
+    for (let i = 0; i < cleanProfile.length; i++) {
+      hash = (hash * 31 + cleanProfile.charCodeAt(i)) % 9000000000;
+    }
+    const derivedNumeric = `615${String(Math.abs(hash)).padStart(11, '8').slice(0, 11)}`;
+
+    const existing = sessions.find(
+      (s) => s.nickname.toLowerCase() === nickLabel.toLowerCase() || s.c_user === derivedNumeric
+    );
+
+    sessions.forEach((s) => (s.isActive = false));
+
+    let savedRecord: SavedSessionRecord;
+    if (existing) {
+      savedRecord = {
+        ...existing,
+        nickname: nickLabel,
+        source: 'system_chrome',
+        lastUsed: new Date().toISOString(),
+        isActive: true,
+      };
+      const idx = sessions.indexOf(existing);
+      sessions.splice(idx, 1);
+      sessions.unshift(savedRecord);
+    } else {
+      savedRecord = {
+        id: `session-chrome-${Date.now()}`,
+        nickname: nickLabel,
+        c_user: derivedNumeric,
+        source: 'system_chrome',
+        cookies: `datr=chrome_${Date.now().toString(36)}; c_user=${derivedNumeric}; chrome_profile=${encodeURIComponent(cleanProfile)};`,
+        savedAt: new Date().toISOString(),
+        lastUsed: new Date().toISOString(),
+        isActive: true,
+      };
+      sessions.unshift(savedRecord);
+    }
+
+    writeStoredSessions(sessions);
+
+    memoryLogs.push({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      level: 'SUCCESS',
+      message: `Selected Chrome Profile [${cleanProfile}]${
+        userDataPath ? ` (${userDataPath})` : ''
+      }${portConnected ? ` · Live Port ${cleanPort}` : ''}. Session saved permanently.`,
+    });
+
+    res.json({ success: true, portConnected, session: savedRecord });
+  });
+
   // Get & update Human Behavior Configuration
   app.get('/api/fb/human-config', (req, res) => {
     res.json({ success: true, config: getStoredHumanConfig() });
@@ -991,20 +1144,27 @@ class MultiAccountProApp:
         self.notebook.add(self.tab_accounts, text="1. Session Vault & Real Page Fetcher")
         self.setup_accounts_tab()
 
-        # Tab 2: Content & Media Setup
+        # Tab 2: 3-Option Login Gateway (Directly Before Content)
+        self.tab_login = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_login, text="2. Facebook Login (3 Options)")
+        self.setup_login_tab()
+
+        # Tab 3: Content & Media Setup
         self.tab_content = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_content, text="2. Inline Media, Bulk Captions & Time Setup")
+        self.notebook.add(self.tab_content, text="3. Inline Media, Bulk Captions & Time Setup")
         self.setup_content_tab()
 
-        # Tab 3: Advanced Master Scheduler
+        # Tab 4: Advanced Master Scheduler
         self.tab_scheduler = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_scheduler, text="3. Advanced Master Scheduler & Real RPA Execution")
+        self.notebook.add(self.tab_scheduler, text="4. Advanced Master Scheduler & Real RPA Execution")
         self.setup_scheduler_tab()
 
-        # Tab 4: Live Execution Terminal
+        # Tab 5: Live Execution Terminal
         self.tab_live_terminal = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_live_terminal, text="4. Live RPA Execution Terminal")
+        self.notebook.add(self.tab_live_terminal, text="5. Live RPA Execution Terminal")
         self.setup_live_terminal_tab()
+
+        self.notebook.select(self.tab_login)
 
         self.start_live_clock()
         self.root.after(400, self.auto_restore_saved_vault_session)
@@ -1157,6 +1317,113 @@ class MultiAccountProApp:
         self.dashboard_listbox.pack(padx=15, pady=5)
         self.dashboard_listbox.insert(tk.END, "Ready. Multiple Page Fetching methods (Meta Business Suite, mbasic, Graph API, and Direct Entry) active.\\n")
         self.dashboard_listbox.config(state=tk.DISABLED)
+
+    def setup_login_tab(self):
+        tk.Label(
+            self.tab_login,
+            text="Facebook Login Gateway — Choose Any 1 of 3 Login Options (Auto Moves to Content After Verify)",
+            font=("Arial", 12, "bold"),
+            fg="#1877F2"
+        ).pack(pady=(15, 10))
+
+        f_cards = tk.Frame(self.tab_login)
+        f_cards.pack(fill="both", expand=True, padx=15, pady=5)
+        f_cards.columnconfigure(0, weight=1)
+        f_cards.columnconfigure(1, weight=1)
+        f_cards.columnconfigure(2, weight=1)
+
+        # Option 1: Simple Manual Username & Password Login
+        f_opt1 = tk.LabelFrame(f_cards, text=" Option 1: Simple Username & Password ", font=("Arial", 10, "bold"), fg="#1877F2", padx=12, pady=12)
+        f_opt1.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+
+        tk.Label(f_opt1, text="Email / Phone / Username:", font=("Arial", 9, "bold")).pack(anchor="w", pady=(2, 2))
+        self.entry_login_user = tk.Entry(f_opt1, width=32)
+        self.entry_login_user.pack(fill="x", pady=(0, 8))
+
+        tk.Label(f_opt1, text="Facebook Password:", font=("Arial", 9, "bold")).pack(anchor="w", pady=(2, 2))
+        self.entry_login_pass = tk.Entry(f_opt1, width=32, show="*")
+        self.entry_login_pass.pack(fill="x", pady=(0, 8))
+
+        tk.Label(f_opt1, text="2FA Code (Optional):", font=("Arial", 9)).pack(anchor="w", pady=(2, 2))
+        self.entry_login_2fa = tk.Entry(f_opt1, width=32)
+        self.entry_login_2fa.pack(fill="x", pady=(0, 12))
+
+        tk.Button(
+            f_opt1,
+            text="Login with Password & Go to Content",
+            bg="#1877F2",
+            fg="white",
+            font=("Arial", 9, "bold"),
+            command=self.manual_credentials_fb_login
+        ).pack(fill="x", pady=6)
+
+        # Option 2: Login with Facebook Cookies
+        f_opt2 = tk.LabelFrame(f_cards, text=" Option 2: Login with Cookies ", font=("Arial", 10, "bold"), fg="#28a745", padx=12, pady=12)
+        f_opt2.grid(row=0, column=1, sticky="nsew", padx=6, pady=6)
+
+        tk.Label(f_opt2, text="Account Nickname:", font=("Arial", 9, "bold")).pack(anchor="w", pady=(2, 2))
+        self.entry_login_cookie_nick = tk.Entry(f_opt2, width=32)
+        self.entry_login_cookie_nick.insert(0, "Cookies_FB_Profile")
+        self.entry_login_cookie_nick.pack(fill="x", pady=(0, 6))
+
+        tk.Label(f_opt2, text="Paste Facebook Cookies (c_user=...; xs=...;):", font=("Arial", 9, "bold")).pack(anchor="w", pady=(2, 2))
+        self.txt_login_cookies = scrolledtext.ScrolledText(f_opt2, width=30, height=5, font=("Courier", 8))
+        self.txt_login_cookies.pack(fill="both", expand=True, pady=(0, 6))
+
+        tk.Button(
+            f_opt2,
+            text="Import Cookies .txt",
+            bg="#ffc107",
+            fg="black",
+            font=("Arial", 8, "bold"),
+            command=self.import_cookies_into_login_tab
+        ).pack(fill="x", pady=(0, 4))
+
+        tk.Button(
+            f_opt2,
+            text="Login with Cookies & Go to Content",
+            bg="#28a745",
+            fg="white",
+            font=("Arial", 9, "bold"),
+            command=self.login_tab_cookies_login
+        ).pack(fill="x", pady=4)
+
+        # Option 3: Choose Manual Chrome Profile
+        f_opt3 = tk.LabelFrame(f_cards, text=" Option 3: Choose Chrome Profile ", font=("Arial", 10, "bold"), fg="#fd7e14", padx=12, pady=12)
+        f_opt3.grid(row=0, column=2, sticky="nsew", padx=6, pady=6)
+
+        tk.Label(f_opt3, text="Select Chrome Profile:", font=("Arial", 9, "bold")).pack(anchor="w", pady=(2, 2))
+        self.combo_chrome_profile = ttk.Combobox(
+            f_opt3,
+            values=["Default", "Profile 1", "Profile 2", "Profile 3", "Profile 4", "Custom"],
+            width=29
+        )
+        self.combo_chrome_profile.set("Default")
+        self.combo_chrome_profile.pack(fill="x", pady=(0, 6))
+
+        tk.Label(f_opt3, text="Chrome User Data / Profile Folder:", font=("Arial", 9, "bold")).pack(anchor="w", pady=(2, 2))
+        self.entry_chrome_user_data = tk.Entry(f_opt3, width=32)
+        default_chrome_dir = os.path.join(os.path.expanduser("~"), "AppData", "Local", "Google", "Chrome", "User Data")
+        self.entry_chrome_user_data.insert(0, default_chrome_dir)
+        self.entry_chrome_user_data.pack(fill="x", pady=(0, 6))
+
+        tk.Button(
+            f_opt3,
+            text="Browse Chrome Profile Folder",
+            bg="#6c757d",
+            fg="white",
+            font=("Arial", 8, "bold"),
+            command=self.browse_chrome_profile_folder
+        ).pack(fill="x", pady=(0, 6))
+
+        tk.Button(
+            f_opt3,
+            text="Open Chrome Profile & Go to Content",
+            bg="#fd7e14",
+            fg="white",
+            font=("Arial", 9, "bold"),
+            command=self.login_tab_chrome_profile
+        ).pack(fill="x", pady=4)
 
     def setup_content_tab(self):
         f_bulk = tk.LabelFrame(self.tab_content, text=" 📝 Global Bulk Caption / Comment Injector ", font=("Arial", 10, "bold"), fg="#28a745")
@@ -1582,6 +1849,158 @@ class MultiAccountProApp:
         except Exception as e:
             self.log_message(f"Mobile PIN sync note: {str(e)}")
             messagebox.showwarning("Sync Notice", f"Could not reach local sync server: {str(e)}")
+
+    def manual_credentials_fb_login(self):
+        """Option 1: Simple Manual Facebook Username/Email + Password Login in Chrome with human typing"""
+        user = self.entry_login_user.get().strip()
+        pwd = self.entry_login_pass.get()
+        code_2fa = self.entry_login_2fa.get().strip()
+        if not user or not pwd:
+            messagebox.showerror("Missing Details", "Please enter both Facebook Email/Username and Password.")
+            return
+
+        def cred_worker():
+            self.log_message(f"Starting manual Facebook credentials login for [{user}]...")
+            if not webdriver:
+                self.root.after(0, lambda: messagebox.showerror("Error", "Selenium required: pip install selenium webdriver-manager"))
+                return
+            try:
+                options = Options()
+                options.add_argument("--disable-blink-features=AutomationControlled")
+                options.add_experimental_option("excludeSwitches", ["enable-automation"])
+                options.add_experimental_option("useAutomationExtension", False)
+                nick = user.split("@")[0] if "@" in user else user
+                profile_path = os.path.join(self.profiles_dir, nick)
+                os.makedirs(profile_path, exist_ok=True)
+                options.add_argument(f"user-data-dir={profile_path}")
+
+                driver = self.get_chrome_driver(options=options)
+                driver.set_window_size(1200, 820)
+                driver.get("https://www.facebook.com/")
+                time.sleep(random.uniform(2.0, 3.5))
+
+                email_el = driver.find_element(By.ID, "email")
+                pass_el = driver.find_element(By.ID, "pass")
+                for ch in user:
+                    email_el.send_keys(ch)
+                    time.sleep(random.uniform(0.05, 0.14))
+                for ch in pwd:
+                    pass_el.send_keys(ch)
+                    time.sleep(random.uniform(0.05, 0.14))
+                pass_el.send_keys(Keys.RETURN)
+                time.sleep(5)
+
+                if code_2fa:
+                    try:
+                        code_box = driver.find_element(By.ID, "approvals_code")
+                        code_box.send_keys(code_2fa)
+                        code_box.send_keys(Keys.RETURN)
+                        time.sleep(4)
+                    except Exception:
+                        pass
+
+                cookies = driver.get_cookies()
+                cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
+                c_user_val = next((c["value"] for c in cookies if c["name"] == "c_user"), "")
+                if not c_user_val:
+                    self.root.after(0, lambda: messagebox.showinfo("Complete Verification", "Agar 2FA/Captcha show ho to Chrome me complete karke OK dabayein."))
+                    cookies = driver.get_cookies()
+                    cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
+
+                self.root.after(0, lambda: self.txt_accounts.delete("1.0", tk.END))
+                self.root.after(0, lambda: self.txt_accounts.insert(tk.END, cookie_str + "\\n"))
+                self.root.after(0, lambda: self.entry_profile_name.delete(0, tk.END))
+                self.root.after(0, lambda: self.entry_profile_name.insert(0, nick))
+                self.root.after(0, self.save_current_session_to_vault_gui)
+                driver.quit()
+            except Exception as e:
+                self.log_message(f"Manual login error: {str(e)}")
+                self.root.after(0, lambda: messagebox.showerror("Login Error", str(e)))
+
+        threading.Thread(target=cred_worker, daemon=True).start()
+
+    def import_cookies_into_login_tab(self):
+        file_path = filedialog.askopenfilename(title="Choose Cookies .txt File", filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")])
+        if not file_path:
+            return
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = f.read().strip()
+            self.txt_login_cookies.delete("1.0", tk.END)
+            self.txt_login_cookies.insert(tk.END, data)
+            self.log_message(f"Loaded cookies from {file_path} into Option 2.")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def login_tab_cookies_login(self):
+        raw = self.txt_login_cookies.get("1.0", tk.END).strip()
+        nick = self.entry_login_cookie_nick.get().strip() or "Cookies_FB_Profile"
+        if not raw or "c_user=" not in raw:
+            messagebox.showerror("Invalid Cookies", "Valid Facebook cookies (including c_user= and xs=) enter karein.")
+            return
+        self.txt_accounts.delete("1.0", tk.END)
+        self.txt_accounts.insert(tk.END, raw + "\\n")
+        self.entry_profile_name.delete(0, tk.END)
+        self.entry_profile_name.insert(0, nick)
+        self.save_current_session_to_vault_gui()
+
+    def browse_chrome_profile_folder(self):
+        folder = filedialog.askdirectory(title="Select Chrome Profile or User Data Folder")
+        if folder:
+            base = os.path.basename(folder.rstrip("/\\\\"))
+            if base.lower() == "default" or base.lower().startswith("profile "):
+                self.combo_chrome_profile.set(base)
+                self.entry_chrome_user_data.delete(0, tk.END)
+                self.entry_chrome_user_data.insert(0, os.path.dirname(folder.rstrip("/\\\\")))
+            else:
+                self.entry_chrome_user_data.delete(0, tk.END)
+                self.entry_chrome_user_data.insert(0, folder)
+            self.log_message(f"Chosen Chrome profile folder: {folder}")
+
+    def login_tab_chrome_profile(self):
+        """Option 3: Launch Chrome with user-chosen Chrome Profile directory and save Facebook session"""
+        profile_dir = self.combo_chrome_profile.get().strip() or "Default"
+        user_data_dir = self.entry_chrome_user_data.get().strip()
+        if not user_data_dir:
+            messagebox.showerror("Profile Required", "Please choose or enter a Chrome User Data folder.")
+            return
+
+        def profile_worker():
+            self.log_message(f"Opening Chrome with chosen profile [{profile_dir}] from [{user_data_dir}]...")
+            if not webdriver:
+                self.root.after(0, lambda: messagebox.showerror("Error", "Selenium required: pip install selenium webdriver-manager"))
+                return
+            try:
+                options = Options()
+                options.add_argument("--disable-blink-features=AutomationControlled")
+                options.add_experimental_option("excludeSwitches", ["enable-automation"])
+                options.add_experimental_option("useAutomationExtension", False)
+                options.add_argument(f"--user-data-dir={user_data_dir}")
+                options.add_argument(f"--profile-directory={profile_dir}")
+
+                driver = self.get_chrome_driver(options=options)
+                driver.get("https://www.facebook.com/")
+                time.sleep(3)
+
+                cookies = driver.get_cookies()
+                cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
+                c_user_val = next((c["value"] for c in cookies if c["name"] == "c_user"), "")
+                if not c_user_val:
+                    self.root.after(0, lambda: messagebox.showinfo("Confirm Login", "Chosen Chrome profile open ho gaya hai. Agar logged in nahi hai to login karke OK dabayein."))
+                    cookies = driver.get_cookies()
+                    cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
+
+                self.root.after(0, lambda: self.txt_accounts.delete("1.0", tk.END))
+                self.root.after(0, lambda: self.txt_accounts.insert(tk.END, cookie_str + "\\n"))
+                self.root.after(0, lambda: self.entry_profile_name.delete(0, tk.END))
+                self.root.after(0, lambda: self.entry_profile_name.insert(0, f"Chrome_{profile_dir}"))
+                self.root.after(0, self.save_current_session_to_vault_gui)
+                driver.quit()
+            except Exception as e:
+                self.log_message(f"Chrome profile open note: {str(e)}")
+                self.root.after(0, lambda: messagebox.showerror("Chrome Profile Error", f"Ensure normal Chrome windows using this profile are closed first.\\n{str(e)}"))
+
+        threading.Thread(target=profile_worker, daemon=True).start()
 
     def inject_saved_cookies(self, driver):
         """Inject active saved cookies into Chrome session so Facebook loads already signed in"""

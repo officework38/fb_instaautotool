@@ -2,8 +2,10 @@ import React from 'react';
 import { Play, Square } from 'lucide-react';
 
 interface TopBarProps {
-  activeTab: 'accounts' | 'content' | 'scheduler' | 'terminal' | 'python' | 'download';
-  setActiveTab: (tab: 'accounts' | 'content' | 'scheduler' | 'terminal' | 'python' | 'download') => void;
+  activeTab: 'accounts' | 'login' | 'content' | 'scheduler' | 'terminal' | 'python' | 'download';
+  setActiveTab: (
+    tab: 'accounts' | 'login' | 'content' | 'scheduler' | 'terminal' | 'python' | 'download'
+  ) => void;
   isEngineRunning: boolean;
   onToggleEngine: () => void;
   pendingJobsCount: number;
@@ -24,12 +26,13 @@ export const TopBar: React.FC<TopBarProps> = ({
     badge?: number;
     liveDot?: boolean;
   }[] = [
-    { id: 'accounts', label: '1. Accounts & Vault', shortLabel: 'Accounts' },
-    { id: 'content', label: '2. Content & Media', shortLabel: 'Content', badge: pendingJobsCount },
-    { id: 'scheduler', label: '3. Master Scheduler', shortLabel: 'Scheduler', liveDot: isEngineRunning },
-    { id: 'terminal', label: '4. Live Terminal', shortLabel: 'Terminal' },
-    { id: 'python', label: 'Fixed Python', shortLabel: 'Python', accent: 'text-amber-400 hover:text-amber-300' },
-    { id: 'download', label: 'EXE & APK', shortLabel: 'EXE/APK', accent: 'text-emerald-400 hover:text-emerald-300 font-bold' },
+    { id: 'accounts', label: '1. Vault', shortLabel: 'Vault' },
+    { id: 'login', label: '2. Login', shortLabel: 'Login' },
+    { id: 'content', label: '3. Content', shortLabel: 'Content', badge: pendingJobsCount },
+    { id: 'scheduler', label: '4. Scheduler', shortLabel: 'Scheduler', liveDot: isEngineRunning },
+    { id: 'terminal', label: '5. Terminal', shortLabel: 'Terminal' },
+    { id: 'python', label: 'Python', shortLabel: 'Python', accent: 'text-amber-400 hover:text-amber-300' },
+    { id: 'download', label: 'EXE/APK', shortLabel: 'EXE/APK', accent: 'text-emerald-400 hover:text-emerald-300 font-bold' },
   ];
 
   return (

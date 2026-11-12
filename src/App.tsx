@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { TopBar } from './components/TopBar';
 import { AccountsTab } from './components/AccountsTab';
+import { LoginHubTab } from './components/LoginHubTab';
 import { ContentTab } from './components/ContentTab';
 import { SchedulerTab } from './components/SchedulerTab';
 import { TerminalTab } from './components/TerminalTab';
@@ -38,8 +39,8 @@ const DEFAULT_HUMAN_CONFIG: HumanBehaviorConfig = {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<
-    'accounts' | 'content' | 'scheduler' | 'terminal' | 'python' | 'download'
-  >('accounts');
+    'accounts' | 'login' | 'content' | 'scheduler' | 'terminal' | 'python' | 'download'
+  >('login');
 
   // Accounts state
   const [accounts, setAccounts] = useState<AccountItem[]>(INITIAL_ACCOUNTS);
@@ -484,6 +485,23 @@ export default function App() {
               setTargets((prev) => [...prev, newTarget]);
               showToast(`Added target [${newTarget.profileName}]!`);
             }}
+            onNotify={showToast}
+            onLog={handleLog}
+          />
+        )}
+
+        {activeTab === 'login' && (
+          <LoginHubTab
+            activeSession={activeSession}
+            fbConfig={fbConfig}
+            setFbConfig={setFbConfig}
+            onSessionChanged={handleSessionChanged}
+            onAddTargetDirect={(newTarget) => {
+              setTargets((prev) => [...prev, newTarget]);
+              showToast(`Added target [${newTarget.profileName}]!`);
+            }}
+            onGoToContent={() => setActiveTab('content')}
+            onGoToAccounts={() => setActiveTab('accounts')}
             onNotify={showToast}
             onLog={handleLog}
           />
