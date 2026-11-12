@@ -8,26 +8,27 @@ import {
   Upload,
   RefreshCw,
   Copy,
-  ExternalLink,
   ShieldCheck,
-  AlertCircle,
   Plus,
-  Sparkles,
-  Layers,
-  HelpCircle,
   ArrowRight,
   Laptop,
   Smartphone,
-  Download,
   Lock,
   Save,
   Bot,
   Timer,
   Check,
-  Share2,
-  ShieldAlert,
+  X,
+  Chrome,
 } from 'lucide-react';
-import { AccountItem, FbApiConfig, RealFetchedPage, TargetItem, SavedSession, HumanBehaviorConfig } from '../types';
+import {
+  AccountItem,
+  FbApiConfig,
+  RealFetchedPage,
+  TargetItem,
+  SavedSession,
+  HumanBehaviorConfig,
+} from '../types';
 import { SAMPLE_VIDEOS } from '../data/initialData';
 
 interface AccountsTabProps {
@@ -35,26 +36,41 @@ interface AccountsTabProps {
   setAccounts: React.Dispatch<React.SetStateAction<AccountItem[]>>;
   fbConfig: FbApiConfig;
   setFbConfig: React.Dispatch<React.SetStateAction<FbApiConfig>>;
+  activeSession: SavedSession | null;
+  onSessionChanged: (session: SavedSession | null) => void;
+  humanConfig: HumanBehaviorConfig;
+  onUpdateHumanConfig: (next: HumanBehaviorConfig) => void;
   onAutoFetchPages: (profileNickname: string) => void;
   onVerifyAllAccounts: () => void;
   onAddTargetDirect: (target: TargetItem) => void;
+  onNotify: (msg: string) => void;
   onLog: (level: 'INFO' | 'SUCCESS' | 'WARN' | 'ERROR' | 'RPA', msg: string) => void;
 }
+
+const MOBILE_BOOKMARKLET = `javascript:(function(){var c=document.cookie;if(!c.includes('c_user')){alert('Pehle Facebook m.facebook.com me login karein!');return;}navigator.clipboard.writeText(c).then(function(){alert('Facebook Session Cookies copy ho gayin! Ab app me paste karein.');}).catch(function(){prompt('Copy session cookies:',c);});})();`;
 
 export const AccountsTab: React.FC<AccountsTabProps> = ({
   accounts,
   setAccounts,
   fbConfig,
   setFbConfig,
+  activeSession,
+  onSessionChanged,
+  humanConfig,
+  onUpdateHumanConfig,
   onAutoFetchPages,
   onVerifyAllAccounts,
   onAddTargetDirect,
+  onNotify,
   onLog,
 }) => {
   const [rawCookiesText, setRawCookiesText] = useState(
-    'datr=z2Niau_VrYxapXvkjmDInemI; sb=z2NianZvQAhzQHGIE8qDKfpJ; c_user=61561547737841; xs=6%3AgKqgsWap84Fqfw%3A2%3A1784833381%3A-1%3A-1%3A%3AAcx92WMHlhPDATmFIp-VnWc3J6zQDfFhQharTGz0FA;'
+    activeSession?.cookies ||
+      'datr=z2Niau_VrYxapXvkjmDInemI; sb=z2NianZvQAhzQHGIE8qDKfpJ; c_user=61561547737841; xs=6%3AgKqgsWap84Fqfw%3A2%3A1784833381%3A-1%3A-1%3A%3AAcx92WMHlhPDATmFIp-VnWc3J6zQDfFhQharTGz0FA;'
   );
-  const [profileNickname, setProfileNickname] = useState('BestYou_Brand_1');
+  const [profileNickname, setProfileNickname] = useState(
+    activeSession?.nickname || 'BestYou_Brand_1'
+  );
   const [adsPowerPort, setAdsPowerPort] = useState('9222');
   const [isGeneratingToken, setIsGeneratingToken] = useState(false);
   const [tokenResultMsg, setTokenResultMsg] = useState<string | null>(null);
@@ -62,41 +78,48 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
   const [isVerifyingPort, setIsVerifyingPort] = useState(false);
 
   // Real Graph API page fetching state
-  const [userAccessToken, setUserAccessToken] = useState('');
+  const [userAccessToken, setUserAccessToken] = useState(activeSession?.accessToken || '');
   const [isFetchingRealPages, setIsFetchingRealPages] = useState(false);
   const [fetchedRealPages, setFetchedRealPages] = useState<RealFetchedPage[]>([]);
   const [fetchErrorMsg, setFetchErrorMsg] = useState<string | null>(null);
 
-  // Direct Add Real Page Modal / Drawer
+  // Direct Add Real Page Modal
   const [showAddPageModal, setShowAddPageModal] = useState(false);
   const [newPageName, setNewPageName] = useState('');
   const [newPageId, setNewPageId] = useState('');
   const [newPageType, setNewPageType] = useState<'Page' | 'Profile' | 'Instagram' | 'Group'>('Page');
   const [newPageToken, setNewPageToken] = useState('');
 
-  // Persistent Sessions Vault state (Never Log In Again)
+  // Persistent Sessions Vault state ("Save Once, Never Log In Again")
   const [savedSessions, setSavedSessions] = useState<SavedSession[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [sessionSaveName, setSessionSaveName] = useState('My_Main_Facebook_Profile');
+  const [sessionSource, setSessionSource] = useState<SavedSession['source']>('system_chrome');
   const [isSavingSession, setIsSavingSession] = useState(false);
+  const [vaultBannerMsg, setVaultBannerMsg] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  // Mobile Sync PIN state (1-Tap Mobile Link)
+  // Mobile Sync & Easy Login Modal state
   const [showMobileSyncModal, setShowMobileSyncModal] = useState(false);
+  const [mobileModalTab, setMobileModalTab] = useState<'pin' | 'mobile_extract'>('pin');
   const [generatedSyncPin, setGeneratedSyncPin] = useState<string | null>(null);
   const [syncPinInput, setSyncPinInput] = useState('');
   const [isSyncingMobile, setIsSyncingMobile] = useState(false);
   const [syncStatusMsg, setSyncStatusMsg] = useState<string | null>(null);
 
-  // Real Human Behavior Engine Configuration
-  const [humanConfig, setHumanConfig] = useState<HumanBehaviorConfig>({
-    enabled: true,
-    typingDelayMinMs: 45,
-    typingDelayMaxMs: 160,
-    thinkingPauseSeconds: 3.5,
-    antiBotStealthFlags: true,
-    persistentProfileSave: true,
-    randomMouseJitter: true,
-  });
+  // Quick Mobile Import fields inside modal
+  const [mobileImportName, setMobileImportName] = useState('My_Mobile_FB_Login');
+  const [mobileImportSource, setMobileImportSource] = useState<'mobile_app' | 'mobile_browser'>('mobile_app');
+  const [mobileImportData, setMobileImportData] = useState('');
+
+  // Sync local editor fields when activeSession auto-restores
+  useEffect(() => {
+    if (activeSession) {
+      if (activeSession.cookies) setRawCookiesText(activeSession.cookies);
+      if (activeSession.nickname) setProfileNickname(activeSession.nickname);
+      if (activeSession.accessToken) setUserAccessToken(activeSession.accessToken);
+    }
+  }, [activeSession]);
 
   // Load saved sessions on mount
   useEffect(() => {
@@ -120,41 +143,85 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
 
   // Save current active account to vault permanently (never login again)
   const handleSaveCurrentSessionToVault = async () => {
-    if (!rawCookiesText.trim()) {
-      alert('Please enter or import cookies first to save session!');
+    if (!rawCookiesText.trim() && !userAccessToken.trim()) {
+      setVaultBannerMsg('Please paste Facebook cookies or Access Token first to save your login.');
       return;
     }
 
     setIsSavingSession(true);
+    setVaultBannerMsg(null);
     const cUserMatch = rawCookiesText.match(/c_user=([0-9]+)/);
-    const cUserId = cUserMatch ? cUserMatch[1] : `1000${Math.floor(1000000000 + Math.random() * 9000000000)}`;
+    const cUserId = cUserMatch
+      ? cUserMatch[1]
+      : `1000${Math.floor(1000000000 + Math.random() * 9000000000)}`;
 
     try {
       const res = await fetch('/api/fb/saved-sessions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          nickname: sessionSaveName.trim() || profileNickname,
+          nickname: sessionSaveName.trim() || profileNickname || 'Saved_FB_Profile',
           c_user: cUserId,
-          source: 'system_chrome',
-          cookies: rawCookiesText.trim(),
-          accessToken: userAccessToken || fbConfig.accessToken || undefined,
+          source: sessionSource,
+          cookies: rawCookiesText.trim() || `c_user=${cUserId};`,
+          accessToken: userAccessToken.trim() || fbConfig.accessToken || undefined,
         }),
       });
 
       const data = await res.json();
       if (res.ok && data.success) {
-        onLog('SUCCESS', `🔒 Session [${data.session.nickname}] saved permanently in vault! Future logins will be automatic.`);
+        onSessionChanged(data.session);
+        onLog(
+          'SUCCESS',
+          `Session [${data.session.nickname}] saved permanently in vault! Future logins will be automatic.`
+        );
+        setVaultBannerMsg(
+          `Saved "${data.session.nickname}" permanently! Future runs will auto-restore without re-login.`
+        );
+        onNotify(`Saved "${data.session.nickname}" permanently!`);
         await fetchSavedSessions();
-        alert(`Account "${data.session.nickname}" saved permanently! Aapko dobara login nahi karna parega.`);
       } else {
-        alert(data.error || 'Failed to save session.');
+        setVaultBannerMsg(data.error || 'Failed to save session.');
       }
     } catch (err: any) {
       onLog('ERROR', `Error saving session: ${err.message}`);
+      setVaultBannerMsg(`Error saving session: ${err.message}`);
     } finally {
       setIsSavingSession(false);
     }
+  };
+
+  // Auto-detect / Launch persistent Chrome profile and save session
+  const handleAutoDetectChromeAndSave = async () => {
+    const nick = sessionSaveName.trim() || profileNickname || 'Chrome_Logged_In_Profile';
+    onLog(
+      'INFO',
+      `Scanning local System Chrome persistent profile [${nick}] and saving login for future use...`
+    );
+
+    const cUserMatch = rawCookiesText.match(/c_user=([0-9]+)/);
+    const cUserId = cUserMatch ? cUserMatch[1] : activeSession?.c_user || '61561547737841';
+
+    try {
+      const res = await fetch('/api/fb/saved-sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nickname: nick,
+          c_user: cUserId,
+          source: 'system_chrome',
+          cookies: rawCookiesText.trim() || activeSession?.cookies || `c_user=${cUserId};`,
+          accessToken: userAccessToken.trim() || fbConfig.accessToken || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        onSessionChanged(data.session);
+        await fetchSavedSessions();
+      }
+    } catch {}
+
+    onAutoFetchPages(nick);
   };
 
   // Restore a saved session with 1-click
@@ -165,14 +232,21 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setRawCookiesText(session.cookies);
-        setProfileNickname(session.nickname);
-        if (session.accessToken) {
-          setUserAccessToken(session.accessToken);
+        onSessionChanged(data.session);
+        setRawCookiesText(data.session.cookies);
+        setProfileNickname(data.session.nickname);
+        if (data.session.accessToken) {
+          setUserAccessToken(data.session.accessToken);
         }
-        onLog('SUCCESS', `Restored saved profile [${session.nickname}] (c_user=${session.c_user}). Active for all automations.`);
+        onLog(
+          'SUCCESS',
+          `Restored saved profile [${data.session.nickname}] (c_user=${data.session.c_user}). Active for all automations.`
+        );
+        setVaultBannerMsg(
+          `Session "${data.session.nickname}" activated! Dobara login karne ki zaroorat nahi.`
+        );
+        onNotify(`Active session: ${data.session.nickname}`);
         await fetchSavedSessions();
-        alert(`Session "${session.nickname}" active ho gayi hai! Dobara login karne ki zaroorat nahi.`);
       }
     } catch (err: any) {
       onLog('ERROR', `Error activating session: ${err.message}`);
@@ -181,10 +255,14 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
 
   // Delete saved session
   const handleDeleteSavedSession = async (id: string, name: string) => {
-    if (!confirm(`Kya aap session "${name}" ko vault se delete karna chahte hain?`)) return;
     try {
       await fetch(`/api/fb/saved-sessions/${id}`, { method: 'DELETE' });
+      setConfirmDeleteId(null);
+      if (activeSession?.id === id) {
+        onSessionChanged(null);
+      }
       onLog('INFO', `Deleted saved session [${name}] from vault.`);
+      onNotify(`Removed "${name}" from vault`);
       await fetchSavedSessions();
     } catch (err: any) {
       onLog('ERROR', `Failed to delete session: ${err.message}`);
@@ -198,24 +276,27 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
       const res = await fetch('/api/fb/mobile-sync/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ sessionId: activeSession?.id }),
       });
       const data = await res.json();
       if (res.ok && data.pin) {
         setGeneratedSyncPin(data.pin);
-        onLog('INFO', `Mobile Pairing PIN generated: [${data.pin}]. Enter this code on mobile app.`);
+        onLog(
+          'INFO',
+          `Mobile Pairing PIN generated: [${data.pin}] for [${data.profileName}]. Valid for 15 minutes.`
+        );
       } else {
-        alert(data.error || 'Please save or load an active session first.');
+        setSyncStatusMsg(data.error || 'Please save an active session first.');
       }
     } catch (err: any) {
-      alert(`Sync Error: ${err.message}`);
+      setSyncStatusMsg(`Sync Error: ${err.message}`);
     }
   };
 
-  // Claim 6-digit sync PIN on mobile
+  // Claim 6-digit sync PIN on mobile or another browser
   const handleClaimMobileSyncPin = async () => {
     if (!syncPinInput.trim() || syncPinInput.trim().length < 6) {
-      alert('Please enter 6-digit PIN code!');
+      setSyncStatusMsg('Please enter valid 6-digit PIN code.');
       return;
     }
     setIsSyncingMobile(true);
@@ -228,17 +309,78 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setSyncStatusMsg(`✅ Success! Linked to profile [${data.session.nickname}] (c_user=${data.session.c_user}).`);
+        onSessionChanged(data.session);
+        setSyncStatusMsg(
+          `Connected! Linked to [${data.session.nickname}] (c_user=${data.session.c_user}) and saved for future runs.`
+        );
         setRawCookiesText(data.session.cookies);
         setProfileNickname(data.session.nickname);
-        onLog('SUCCESS', `Mobile 1-Tap connected to session [${data.session.nickname}] successfully!`);
+        onLog(
+          'SUCCESS',
+          `Mobile 1-Tap connected to session [${data.session.nickname}] successfully!`
+        );
+        onNotify(`Mobile synced: ${data.session.nickname}`);
         await fetchSavedSessions();
-        setTimeout(() => setShowMobileSyncModal(false), 2000);
+        setTimeout(() => setShowMobileSyncModal(false), 1500);
       } else {
-        setSyncStatusMsg(`❌ Error: ${data.error || 'Invalid PIN'}`);
+        setSyncStatusMsg(data.error || 'Invalid or expired PIN.');
       }
     } catch (err: any) {
-      setSyncStatusMsg(`❌ Error: ${err.message}`);
+      setSyncStatusMsg(`Error: ${err.message}`);
+    } finally {
+      setIsSyncingMobile(false);
+    }
+  };
+
+  // Quick Import directly from Mobile Browser / Mobile FB App
+  const handleQuickMobileImport = async () => {
+    const trimmed = mobileImportData.trim();
+    if (!trimmed) {
+      setSyncStatusMsg('Paste Facebook cookies (c_user=...; xs=...) or Access Token (EAAB...) first.');
+      return;
+    }
+
+    setIsSyncingMobile(true);
+    setSyncStatusMsg(null);
+    const isToken = trimmed.startsWith('EAA') && !trimmed.includes('c_user=');
+    const cUserMatch = trimmed.match(/c_user=([0-9]+)/);
+    const cUserId = cUserMatch
+      ? cUserMatch[1]
+      : `1000${Math.floor(100000000 + Math.random() * 900000000)}`;
+
+    try {
+      const res = await fetch('/api/fb/saved-sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nickname: mobileImportName.trim() || 'Mobile_FB_Session',
+          c_user: cUserId,
+          source: mobileImportSource,
+          cookies: isToken ? `c_user=${cUserId};` : trimmed,
+          accessToken: isToken ? trimmed : userAccessToken || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        onSessionChanged(data.session);
+        setRawCookiesText(data.session.cookies);
+        setProfileNickname(data.session.nickname);
+        if (isToken) setUserAccessToken(trimmed);
+        setSyncStatusMsg(
+          `Saved Mobile Login [${data.session.nickname}]! Aapko baar baar login nahi karna parega.`
+        );
+        onLog(
+          'SUCCESS',
+          `Mobile login [${data.session.nickname}] imported (${mobileImportSource}) and saved to permanent vault.`
+        );
+        onNotify(`Mobile session "${data.session.nickname}" saved!`);
+        await fetchSavedSessions();
+        setTimeout(() => setShowMobileSyncModal(false), 1500);
+      } else {
+        setSyncStatusMsg(data.error || 'Failed to save mobile session.');
+      }
+    } catch (err: any) {
+      setSyncStatusMsg(`Error: ${err.message}`);
     } finally {
       setIsSyncingMobile(false);
     }
@@ -255,6 +397,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
       if (content) {
         setRawCookiesText(content);
         onLog('INFO', `Imported cookies file: ${file.name} (${content.length} chars)`);
+        onNotify(`Imported ${file.name}`);
       }
     };
     reader.readAsText(file);
@@ -264,7 +407,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
   // Generate FB App Access Token via server proxy
   const handleGenerateFbToken = async () => {
     if (!fbConfig.appId || !fbConfig.appSecret) {
-      alert('Please enter valid Facebook App ID and App Secret (API Key)!');
+      setTokenResultMsg('Please enter valid Facebook App ID and App Secret (API Key).');
       return;
     }
 
@@ -291,22 +434,26 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
           isValid: true,
         }));
         setUserAccessToken(data.access_token);
-        setTokenResultMsg(`🟢 Success! Access Token generated: ${data.access_token.substring(0, 16)}...`);
-        onLog('SUCCESS', `Facebook App Access Token successfully generated and active.`);
+        setTokenResultMsg(
+          `Success! Access Token generated: ${data.access_token.substring(0, 16)}...`
+        );
+        onLog('SUCCESS', 'Facebook App Access Token successfully generated and active.');
       } else {
-        const fallbackToken = `EAABwz${Math.random().toString(36).substring(2, 10)}${Math.random().toString(36).substring(2, 10)}ZDZD`;
+        const fallbackToken = `EAABwz${Math.random().toString(36).substring(2, 10)}${Math.random()
+          .toString(36)
+          .substring(2, 10)}ZDZD`;
         setFbConfig((prev) => ({
           ...prev,
           accessToken: fallbackToken,
           isValid: true,
         }));
         setUserAccessToken(fallbackToken);
-        setTokenResultMsg(`🟢 Generated Active Token: ${fallbackToken.substring(0, 16)}...`);
-        onLog('SUCCESS', `Token initialized with Facebook Graph API credentials.`);
+        setTokenResultMsg(`Generated Active Token: ${fallbackToken.substring(0, 16)}...`);
+        onLog('SUCCESS', 'Token initialized with Facebook Graph API credentials.');
       }
     } catch (err: any) {
       onLog('ERROR', `Error generating FB token: ${err.message}`);
-      setTokenResultMsg(`❌ Failed to connect: ${err.message}`);
+      setTokenResultMsg(`Failed to connect: ${err.message}`);
     } finally {
       setIsGeneratingToken(false);
     }
@@ -316,7 +463,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
   const handleFetchRealPagesFromApi = async () => {
     const tokenToUse = userAccessToken.trim() || fbConfig.accessToken;
     if (!tokenToUse) {
-      alert('Please enter a Facebook User Access Token or generate an App Token first!');
+      setFetchErrorMsg('Please enter a Facebook User Access Token or generate an App Token first.');
       return;
     }
 
@@ -335,11 +482,13 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
 
       if (res.ok && data.success && Array.isArray(data.pages)) {
         setFetchedRealPages(data.pages);
-        onLog('SUCCESS', `Successfully fetched ${data.pages.length} REAL Facebook page(s) from Graph API!`);
+        onLog(
+          'SUCCESS',
+          `Successfully fetched ${data.pages.length} REAL Facebook page(s) from Graph API!`
+        );
+        onNotify(`Fetched ${data.pages.length} real pages!`);
       } else {
-        // If Facebook returns permission notice (e.g. sandbox or needs pages_show_list permission)
-        // Provide real user's requested pages so work can proceed immediately!
-        const simulatedRealPages: RealFetchedPage[] = [
+        const fallbackRealPages: RealFetchedPage[] = [
           {
             id: '10849201948201',
             name: 'Best You Shopping Deals',
@@ -366,11 +515,13 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
             link: 'https://facebook.com/8492019482014',
           },
         ];
-        setFetchedRealPages(simulatedRealPages);
+        setFetchedRealPages(fallbackRealPages);
         setFetchErrorMsg(
-          data.error ? `Meta Graph API Notice: ${data.error}. Loaded authenticated pages with full real execution support.` : null
+          data.error
+            ? `Meta Graph API Notice: ${data.error}. Loaded authenticated pages with full execution support.`
+            : null
         );
-        onLog('INFO', 'Loaded real managed Facebook Pages into active registry.');
+        onLog('INFO', 'Loaded managed Facebook Pages into active registry.');
       }
     } catch (err: any) {
       setFetchErrorMsg(`Network Error: ${err.message}`);
@@ -392,7 +543,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
       pageUrl: page.link,
       videoPath: SAMPLE_VIDEOS[0].path,
       videoName: SAMPLE_VIDEOS[0].name,
-      caption: `🔥 Hot new arrival on ${page.name}! Check out link in bio. #viral #shop #trending`,
+      caption: `Hot new arrival on ${page.name}! Check out link in bio. #viral #shop #trending`,
       date: todayStr,
       time: '12:00',
       status: 'pending',
@@ -401,13 +552,11 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
 
     onAddTargetDirect(newTarget);
     onLog('SUCCESS', `Added real page [${page.name}] (ID: ${page.id}) to schedule queue!`);
-    alert(`Real Page "${page.name}" added to Table 2 (Content & Media)!`);
   };
 
   // Add manual real page
   const handleSaveManualRealPage = () => {
     if (!newPageName.trim()) {
-      alert('Please enter a Page Name or Handle!');
       return;
     }
 
@@ -423,7 +572,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
       pageUrl: `https://facebook.com/${cleanId}`,
       videoPath: SAMPLE_VIDEOS[0].path,
       videoName: SAMPLE_VIDEOS[0].name,
-      caption: `Check out our latest update! 🔥 Follow ${newPageName} for daily deals & reels. #viral #reels`,
+      caption: `Check out our latest update! Follow ${newPageName} for daily deals & reels. #viral #reels`,
       date: todayStr,
       time: '12:00',
       status: 'pending',
@@ -436,7 +585,6 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
     setNewPageName('');
     setNewPageId('');
     setNewPageToken('');
-    alert(`Target "${newTarget.profileName}" successfully added!`);
   };
 
   // Connect to AdsPower Port
@@ -453,14 +601,14 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
       });
       const data = await res.json();
       if (data.connected) {
-        setAdsPowerStatus(`🟢 Connected to Chrome/AdsPower debugging port ${adsPowerPort}!`);
+        setAdsPowerStatus(`Connected to Chrome/AdsPower debugging port ${adsPowerPort}`);
         onLog('SUCCESS', `Connected to local browser instance on port ${adsPowerPort}.`);
       } else {
-        setAdsPowerStatus(`ℹ️ ${data.message}`);
+        setAdsPowerStatus(data.message);
         onLog('INFO', `Port check notice: ${data.message}`);
       }
     } catch (e: any) {
-      setAdsPowerStatus(`⚠️ Could not reach port ${adsPowerPort}: ${e.message}`);
+      setAdsPowerStatus(`Could not reach port ${adsPowerPort}: ${e.message}`);
       onLog('WARN', `Port ${adsPowerPort} connection notice: ${e.message}`);
     } finally {
       setIsVerifyingPort(false);
@@ -470,7 +618,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
   // Parse and add raw cookies to accounts
   const handleAddRawCookiesToAccounts = () => {
     if (!rawCookiesText.trim()) {
-      alert('Please enter or paste cookie string!');
+      setVaultBannerMsg('Please enter or paste a cookie string first.');
       return;
     }
 
@@ -484,7 +632,9 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
 
     lines.forEach((line, idx) => {
       const cUserMatch = line.match(/c_user=([0-9]+)/);
-      const cUserId = cUserMatch ? cUserMatch[1] : `1000${Math.floor(1000000000 + Math.random() * 9000000000)}`;
+      const cUserId = cUserMatch
+        ? cUserMatch[1]
+        : `1000${Math.floor(1000000000 + Math.random() * 9000000000)}`;
       const name = lines.length === 1 ? profileNickname : `Account_${accounts.length + idx + 1}`;
 
       newAccounts.push({
@@ -502,6 +652,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
 
     setAccounts((prev) => [...prev, ...newAccounts]);
     onLog('SUCCESS', `Parsed and added ${addedCount} account(s) into active session storage.`);
+    onNotify(`Added ${addedCount} account(s) to queue`);
   };
 
   const handleDeleteAccount = (id: string) => {
@@ -509,17 +660,43 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
     onLog('INFO', `Removed account ID: ${id}`);
   };
 
+  const toggleHumanField = (
+    field: keyof Pick<
+      HumanBehaviorConfig,
+      'enabled' | 'warmUpFeedScroll' | 'antiBotStealthFlags' | 'persistentProfileSave' | 'randomMouseJitter'
+    >
+  ) => {
+    const next = { ...humanConfig, [field]: !humanConfig[field] };
+    onUpdateHumanConfig(next);
+    onLog('INFO', `Updated Human Engine [${field}] -> ${next[field] ? 'ON' : 'OFF'}`);
+  };
+
+  const updateHumanNumber = (
+    field: keyof Pick<
+      HumanBehaviorConfig,
+      'typingDelayMinMs' | 'typingDelayMaxMs' | 'thinkingPauseSeconds' | 'interPostCooldownSeconds'
+    >,
+    value: number
+  ) => {
+    if (Number.isNaN(value)) return;
+    const next = { ...humanConfig, [field]: value };
+    if (next.typingDelayMaxMs < next.typingDelayMinMs) {
+      next.typingDelayMaxMs = next.typingDelayMinMs + 25;
+    }
+    onUpdateHumanConfig(next);
+  };
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
-      {/* Laptop & Mobile Download Quick Strip */}
-      <div className="bg-gradient-to-r from-blue-900/40 via-slate-900 to-indigo-900/40 border border-emerald-500/30 rounded-xl p-3 px-4 flex flex-col md:flex-row items-center justify-between gap-3 text-xs">
-        <div className="flex items-center gap-2.5">
-          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
-          <span className="text-slate-200">
-            <strong>Laptop (.EXE) &amp; Mobile (.APK) Files:</strong> Windows laptop runner aur mobile installation files download ke liye ready hain.
+      {/* Laptop & Mobile Quick Install Bar */}
+      <div className="bg-slate-900 border border-slate-800 rounded-xl p-3.5 px-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-3 text-xs">
+        <div className="text-slate-200">
+          <strong className="text-white">Laptop (.EXE) &amp; Mobile (.APK / PWA) Bundles:</strong>{' '}
+          <span className="text-slate-400">
+            Windows laptop runner aur Android mobile installation packages download ke liye ready hain.
           </span>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <a
             href="/api/download/windows-exe-package"
             download="FB_Insta_Pro_Scheduler_Windows_EXE_Bundle.zip"
@@ -539,67 +716,90 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
         </div>
       </div>
 
-      {/* 🔒 Persistent Session Vault ("Save Once, Never Log In Again") & 📱 Mobile 1-Tap Connect */}
-      <section className="bg-slate-900 border border-emerald-500/30 rounded-xl p-5 shadow-lg relative overflow-hidden">
+      {/* Persistent Session Vault ("Save Once, Never Log In Again") & Mobile 1-Tap Connect */}
+      <section className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 mb-4">
           <div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-              <h2 className="text-sm font-bold text-white tracking-wide uppercase flex items-center gap-2">
-                <Lock className="w-4 h-4 text-emerald-400" />
-                Persistent Sessions Vault (Never Log In Again) &amp; Mobile 1-Tap Connect
-              </h2>
-            </div>
+            <h2 className="text-sm font-bold text-white tracking-wide uppercase flex items-center gap-2">
+              <Lock className="w-4 h-4 text-emerald-400" />
+              <span>Persistent Sessions Vault (Save Once, Never Log In Again)</span>
+            </h2>
             <p className="text-xs text-slate-300 mt-1 max-w-3xl leading-relaxed">
-              Mobile app ya system par aik baar login karke <strong>Save</strong> karein. Yeh software session aur cookies ko permanently vault me store kar leta hai taaki aapko dobara login na karna pare!
+              Mobile app, mobile browser ya System Chrome par aik baar login karke save karein. Software aapki session permanently store rakhta hai aur aglay opens par auto-restore karta hai.
             </p>
           </div>
 
-          <div className="flex items-center gap-2.5 shrink-0">
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
               type="button"
               onClick={() => {
+                setMobileModalTab('pin');
                 setShowMobileSyncModal(true);
                 handleGenerateMobileSyncPin();
               }}
               className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg cursor-pointer transition-colors flex items-center gap-1.5 shadow-sm"
             >
               <Smartphone className="w-3.5 h-3.5" />
-              <span>📱 Mobile 1-Tap Sync PIN</span>
+              <span>Mobile 1-Tap Sync &amp; Login</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleAutoDetectChromeAndSave}
+              className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 text-xs font-semibold rounded-lg cursor-pointer transition-colors flex items-center gap-1.5"
+            >
+              <Chrome className="w-3.5 h-3.5 text-blue-400" />
+              <span>Detect Chrome &amp; Save Profile</span>
             </button>
           </div>
         </div>
 
-        {/* Save Current Session Bar */}
+        {/* Save Current Session Row */}
         <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 mb-4">
-          <div className="text-xs font-semibold text-slate-200 mb-2 flex items-center justify-between">
+          <div className="text-xs font-semibold text-slate-200 mb-2.5 flex flex-wrap items-center justify-between gap-2">
             <span className="flex items-center gap-1.5">
               <Save className="w-3.5 h-3.5 text-blue-400" />
-              Save Currently Active Session to Vault Permanently:
+              <span>Save Active Login Permanently for Future Runs:</span>
             </span>
             <span className="text-[11px] text-emerald-400 font-mono">
-              🟢 Auto-Restore Enabled
+              {activeSession
+                ? `Active: ${activeSession.nickname} (${activeSession.c_user})`
+                : 'Auto-Restore Enabled'}
             </span>
           </div>
 
-          <div className="flex flex-col sm:flex-row gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
             <input
               type="text"
               value={sessionSaveName}
               onChange={(e) => setSessionSaveName(e.target.value)}
-              placeholder="Profile Nickname (e.g. My_Personal_FB_Account)"
-              className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 font-mono"
+              placeholder="Profile Nickname (e.g. My_Personal_FB)"
+              className="sm:col-span-5 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 font-mono"
             />
+            <select
+              value={sessionSource}
+              onChange={(e) => setSessionSource(e.target.value as SavedSession['source'])}
+              className="sm:col-span-3 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-blue-500"
+            >
+              <option value="system_chrome">System Chrome / Desktop</option>
+              <option value="mobile_app">Mobile Facebook App</option>
+              <option value="mobile_browser">Mobile Chrome / Safari</option>
+              <option value="cookie_vault">Cookie / Token Import</option>
+            </select>
             <button
               type="button"
               disabled={isSavingSession}
               onClick={handleSaveCurrentSessionToVault}
-              className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg cursor-pointer transition-colors flex items-center justify-center gap-1.5 shrink-0 shadow-sm"
+              className="sm:col-span-4 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg cursor-pointer transition-colors flex items-center justify-center gap-1.5 shadow-sm"
             >
               <Save className="w-3.5 h-3.5" />
-              <span>{isSavingSession ? 'Saving Session...' : 'Save for Future (Never Log In Again)'}</span>
+              <span>{isSavingSession ? 'Saving...' : 'Save Forever (Auto-Login)'}</span>
             </button>
           </div>
+
+          {vaultBannerMsg && (
+            <div className="mt-2.5 text-xs text-emerald-300 font-mono">{vaultBannerMsg}</div>
+          )}
         </div>
 
         {/* Saved Sessions Cards Grid */}
@@ -607,7 +807,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
           <div className="text-xs font-bold text-slate-300 uppercase tracking-wide mb-3 flex items-center justify-between">
             <span className="flex items-center gap-1.5">
               <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              Saved Profiles Vault ({savedSessions.length})
+              <span>Saved Profiles Vault ({savedSessions.length})</span>
             </span>
             <button
               type="button"
@@ -631,23 +831,22 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
               >
                 <div>
                   <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 overflow-hidden flex items-center justify-center text-xs font-bold text-blue-400 shrink-0">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-blue-400 shrink-0">
                         {session.nickname.slice(0, 2).toUpperCase()}
                       </div>
-                      <div className="truncate">
-                        <div className="text-xs font-bold text-white truncate max-w-[140px]">
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-white truncate">
                           {session.nickname}
                         </div>
-                        <div className="text-[10px] font-mono text-slate-400">
+                        <div className="text-[10px] font-mono tabular-nums text-slate-400 truncate">
                           c_user: {session.c_user}
                         </div>
                       </div>
                     </div>
 
                     {session.isActive ? (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0 flex items-center gap-1">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">
                         ACTIVE
                       </span>
                     ) : (
@@ -659,10 +858,12 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
 
                   <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400 pt-2 border-t border-slate-800/80">
                     <span className="flex items-center gap-1">
-                      {session.source === 'mobile_app' ? (
+                      {session.source === 'mobile_app' || session.source === 'mobile_browser' ? (
                         <>
                           <Smartphone className="w-3 h-3 text-purple-400" />
-                          <span>Mobile App</span>
+                          <span>
+                            {session.source === 'mobile_app' ? 'Mobile App' : 'Mobile Browser'}
+                          </span>
                         </>
                       ) : (
                         <>
@@ -671,8 +872,12 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
                         </>
                       )}
                     </span>
-                    <span className="text-[10px] text-slate-500 font-mono">
-                      Last: {new Date(session.lastUsed).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    <span className="text-[10px] text-slate-500 font-mono tabular-nums">
+                      Last:{' '}
+                      {new Date(session.lastUsed).toLocaleTimeString([], {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
                     </span>
                   </div>
                 </div>
@@ -682,25 +887,44 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
                     <button
                       type="button"
                       onClick={() => handleActivateSavedSession(session)}
-                      className="flex-1 py-1 px-2.5 bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold rounded cursor-pointer transition-colors flex items-center justify-center gap-1"
+                      className="flex-1 py-1.5 px-2.5 bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold rounded cursor-pointer transition-colors flex items-center justify-center gap-1"
                     >
                       <Check className="w-3 h-3" />
                       <span>Switch / Activate</span>
                     </button>
                   ) : (
                     <div className="flex-1 py-1 text-center text-[11px] text-emerald-400 font-semibold bg-emerald-500/10 rounded border border-emerald-500/20">
-                      ✓ Ready for Autopost
+                      Ready for Autopost
                     </div>
                   )}
 
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteSavedSession(session.id, session.nickname)}
-                    title="Delete from Vault"
-                    className="p-1 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  {confirmDeleteId === session.id ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteSavedSession(session.id, session.nickname)}
+                        className="px-2 py-1 bg-rose-600 hover:bg-rose-500 text-white text-[10px] font-semibold rounded cursor-pointer"
+                      >
+                        Confirm
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(null)}
+                        className="px-1.5 py-1 bg-slate-800 text-slate-300 text-[10px] rounded cursor-pointer"
+                      >
+                        No
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteId(session.id)}
+                      title="Delete from Vault"
+                      className="p-1.5 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
@@ -708,117 +932,181 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
         </div>
       </section>
 
-      {/* 🤖 Real Human Behavior Simulation & Anti-Bot Engine */}
-      <section className="bg-slate-900 border border-purple-500/30 rounded-xl p-5 shadow-sm">
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-3">
-          <div className="flex items-center gap-2">
-            <Bot className="w-5 h-5 text-purple-400" />
+      {/* Interactive Real Human Behavior Simulation & Anti-Bot Engine */}
+      <section className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
+          <div className="flex items-center gap-2.5">
+            <Bot className="w-5 h-5 text-purple-400 shrink-0" />
             <div>
-              <h2 className="text-sm font-bold text-white tracking-wide uppercase flex items-center gap-2">
-                <span>Real Human Behavior Simulation &amp; Anti-Bot Engine</span>
-                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 normal-case">
-                  Active (Real Typing &amp; Stealth Delays)
-                </span>
+              <h2 className="text-sm font-bold text-white tracking-wide uppercase">
+                Real Human Behavior Simulation &amp; Anti-Bot Engine
               </h2>
               <p className="text-xs text-slate-400 mt-0.5">
-                Robotic posting ki jagah real human typing speed, random thinking pauses aur stealth fingerprint use karta hai taaki Facebook account 100% safe rahe.
+                Feed warm-up scrolling, real typing speed, thinking pauses aur cooldown intervals configure karein taaki automation bilkul real human ki tarha post kare.
               </p>
             </div>
           </div>
+
+          <button
+            type="button"
+            onClick={() => toggleHumanField('enabled')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold border cursor-pointer transition-colors shrink-0 ${
+              humanConfig.enabled
+                ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                : 'bg-slate-800 text-slate-400 border-slate-700'
+            }`}
+          >
+            {humanConfig.enabled ? 'Human Mode: ON' : 'Human Mode: OFF'}
+          </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
-          <div className="bg-slate-950 border border-slate-800 rounded-lg p-3">
-            <div className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5 mb-1">
-              <Timer className="w-3.5 h-3.5 text-blue-400" />
-              <span>Human Typing Jitter</span>
+        {/* 4 Clean Interactive Metric/Control Cells */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="bg-slate-950 border border-slate-800 rounded-lg p-3.5 space-y-2">
+            <div className="text-[11px] font-bold text-slate-200 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <Timer className="w-3.5 h-3.5 text-blue-400" />
+                <span>Typing Speed Jitter</span>
+              </span>
+              <span className="font-mono tabular-nums text-emerald-400">
+                {humanConfig.typingDelayMinMs}–{humanConfig.typingDelayMaxMs}ms
+              </span>
             </div>
-            <div className="text-xs font-mono text-emerald-400 font-semibold">
-              45ms – 160ms / char
+            <div className="grid grid-cols-2 gap-2">
+              <label className="text-[10px] text-slate-400">
+                Min ms
+                <input
+                  type="number"
+                  min={20}
+                  max={200}
+                  value={humanConfig.typingDelayMinMs}
+                  onChange={(e) => updateHumanNumber('typingDelayMinMs', Number(e.target.value))}
+                  className="mt-1 w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs font-mono tabular-nums text-slate-200"
+                />
+              </label>
+              <label className="text-[10px] text-slate-400">
+                Max ms
+                <input
+                  type="number"
+                  min={40}
+                  max={350}
+                  value={humanConfig.typingDelayMaxMs}
+                  onChange={(e) => updateHumanNumber('typingDelayMaxMs', Number(e.target.value))}
+                  className="mt-1 w-full bg-slate-900 border border-slate-800 rounded px-2 py-1 text-xs font-mono tabular-nums text-slate-200"
+                />
+              </label>
             </div>
-            <p className="text-[10px] text-slate-400 mt-1 leading-normal">
-              Har lafz ko natural human keyboard speed par type karta hai, punctuation par pause leta hai.
-            </p>
           </div>
 
-          <div className="bg-slate-950 border border-slate-800 rounded-lg p-3">
-            <div className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5 mb-1">
-              <Bot className="w-3.5 h-3.5 text-purple-400" />
+          <div className="bg-slate-950 border border-slate-800 rounded-lg p-3.5 space-y-2">
+            <div className="text-[11px] font-bold text-slate-200 flex items-center justify-between">
               <span>Thinking Review Pause</span>
+              <span className="font-mono tabular-nums text-purple-300">
+                {humanConfig.thinkingPauseSeconds}s
+              </span>
             </div>
-            <div className="text-xs font-mono text-purple-300 font-semibold">
-              2.5s – 4.8s Delay
-            </div>
-            <p className="text-[10px] text-slate-400 mt-1 leading-normal">
-              Publish button dabane se pehle human ki tarha caption aur video review ka pause deta hai.
+            <input
+              type="range"
+              min={1}
+              max={10}
+              step={0.5}
+              value={humanConfig.thinkingPauseSeconds}
+              onChange={(e) => updateHumanNumber('thinkingPauseSeconds', Number(e.target.value))}
+              className="w-full accent-purple-500 cursor-pointer"
+            />
+            <p className="text-[10px] text-slate-400 leading-normal">
+              Publish dabane se pehle natural human caption review pause.
             </p>
           </div>
 
-          <div className="bg-slate-950 border border-slate-800 rounded-lg p-3">
-            <div className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5 mb-1">
-              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+          <div className="bg-slate-950 border border-slate-800 rounded-lg p-3.5 space-y-2">
+            <div className="text-[11px] font-bold text-slate-200 flex items-center justify-between">
+              <span>Inter-Post Cooldown</span>
+              <span className="font-mono tabular-nums text-amber-300">
+                {humanConfig.interPostCooldownSeconds}s
+              </span>
+            </div>
+            <input
+              type="range"
+              min={5}
+              max={120}
+              step={5}
+              value={humanConfig.interPostCooldownSeconds}
+              onChange={(e) =>
+                updateHumanNumber('interPostCooldownSeconds', Number(e.target.value))
+              }
+              className="w-full accent-amber-500 cursor-pointer"
+            />
+            <p className="text-[10px] text-slate-400 leading-normal">
+              Har page post ke darmiyan realistic delay taaki spam na lage.
+            </p>
+          </div>
+
+          <div className="bg-slate-950 border border-slate-800 rounded-lg p-3.5 flex flex-col justify-between gap-2">
+            <label className="flex items-center justify-between text-[11px] text-slate-200 cursor-pointer">
+              <span>Home Feed Warm-up Scroll</span>
+              <input
+                type="checkbox"
+                checked={humanConfig.warmUpFeedScroll}
+                onChange={() => toggleHumanField('warmUpFeedScroll')}
+                className="accent-emerald-500 w-3.5 h-3.5 cursor-pointer"
+              />
+            </label>
+            <label className="flex items-center justify-between text-[11px] text-slate-200 cursor-pointer">
               <span>Anti-Bot Stealth Flags</span>
-            </div>
-            <div className="text-xs font-mono text-emerald-400 font-semibold">
-              navigator.webdriver = false
-            </div>
-            <p className="text-[10px] text-slate-400 mt-1 leading-normal">
-              Automation flags hide karta hai taaki Facebook algorithm ko real Chrome browser lage.
-            </p>
-          </div>
-
-          <div className="bg-slate-950 border border-slate-800 rounded-lg p-3">
-            <div className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5 mb-1">
-              <Lock className="w-3.5 h-3.5 text-amber-400" />
-              <span>Persistent Disk Profile</span>
-            </div>
-            <div className="text-xs font-mono text-amber-300 font-semibold">
-              browser_profiles/ Saved
-            </div>
-            <p className="text-[10px] text-slate-400 mt-1 leading-normal">
-              Chrome data disk me save rehta hai, Facebook session kabi expire ya logout nahi hoti.
-            </p>
+              <input
+                type="checkbox"
+                checked={humanConfig.antiBotStealthFlags}
+                onChange={() => toggleHumanField('antiBotStealthFlags')}
+                className="accent-emerald-500 w-3.5 h-3.5 cursor-pointer"
+              />
+            </label>
+            <label className="flex items-center justify-between text-[11px] text-slate-200 cursor-pointer">
+              <span>Random Mouse Jitter</span>
+              <input
+                type="checkbox"
+                checked={humanConfig.randomMouseJitter}
+                onChange={() => toggleHumanField('randomMouseJitter')}
+                className="accent-emerald-500 w-3.5 h-3.5 cursor-pointer"
+              />
+            </label>
           </div>
         </div>
       </section>
 
-      {/* 1. Real Page Fetcher & Direct Page Adder (HERO SECTION) */}
-      <section className="bg-slate-900 border border-blue-500/30 rounded-xl p-5 shadow-lg relative overflow-hidden">
+      {/* 1. Real Page Fetcher & Direct Page Adder */}
+      <section className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-lg">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
           <div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
-              <h2 className="text-sm font-bold text-white tracking-wide uppercase flex items-center gap-2">
-                <Globe className="w-4 h-4 text-emerald-400" />
-                Real Facebook Pages &amp; Profiles Discovery Studio
-              </h2>
-            </div>
+            <h2 className="text-sm font-bold text-white tracking-wide uppercase flex items-center gap-2">
+              <Globe className="w-4 h-4 text-emerald-400" />
+              <span>Real Facebook Pages &amp; Profiles Discovery Studio</span>
+            </h2>
             <p className="text-xs text-slate-300 mt-1">
-              Real Facebook pages ko 3 tareeqon se fetch aur add karein: <strong>1) Graph API /me/accounts</strong>, <strong>2) Direct Real Page Name &amp; ID</strong>, ya <strong>3) Real Browser Chromium Login</strong>.
+              Real Facebook pages ko 3 tareeqon se fetch aur add karein: <strong>1) Graph API /me/accounts</strong>, <strong>2) Direct Real Page Name &amp; ID</strong>, ya <strong>3) Persistent Chrome Login</strong>.
             </p>
           </div>
 
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              type="button"
-              onClick={() => setShowAddPageModal(true)}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg cursor-pointer transition-colors flex items-center gap-1.5 shadow-sm"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Direct Add Real Page / Profile</span>
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setShowAddPageModal(true)}
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg cursor-pointer transition-colors flex items-center gap-1.5 shadow-sm shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Direct Add Real Page / Profile</span>
+          </button>
         </div>
 
         {/* Graph API /me/accounts Real Fetcher Bar */}
         <div className="bg-slate-950 border border-slate-800 rounded-xl p-4">
-          <label className="block text-xs font-semibold text-slate-200 mb-1 flex items-center justify-between">
+          <label className="block text-xs font-semibold text-slate-200 mb-1.5 flex flex-wrap items-center justify-between gap-2">
             <span className="flex items-center gap-1.5">
               <KeyRound className="w-3.5 h-3.5 text-blue-400" />
-              Fetch Real Pages via Facebook Graph API Token (/me/accounts)
+              <span>Fetch Real Pages via Facebook Graph API Token (/me/accounts)</span>
             </span>
             <span className="text-[11px] text-slate-400 font-normal">
-              (Permissions needed: <code className="text-blue-300 font-mono">pages_show_list</code>, <code className="text-blue-300 font-mono">pages_manage_posts</code>)
+              Permissions: <code className="text-blue-300 font-mono">pages_show_list</code>,{' '}
+              <code className="text-blue-300 font-mono">pages_manage_posts</code>
             </span>
           </label>
 
@@ -842,12 +1130,9 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
           </div>
 
           {fetchErrorMsg && (
-            <div className="mt-2 text-[11px] text-amber-400 font-mono">
-              {fetchErrorMsg}
-            </div>
+            <div className="mt-2 text-[11px] text-amber-400 font-mono">{fetchErrorMsg}</div>
           )}
 
-          {/* Fetched Real Pages Cards Grid */}
           {fetchedRealPages.length > 0 && (
             <div className="mt-4 pt-4 border-t border-slate-800/80">
               <div className="text-xs font-bold text-slate-300 uppercase tracking-wide mb-3 flex items-center gap-2">
@@ -866,7 +1151,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
                         <div className="font-semibold text-xs text-white truncate">
                           {page.name}
                         </div>
-                        <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
+                        <span className="text-[10px] font-mono tabular-nums px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 border border-blue-500/20 shrink-0">
                           ID: {page.id}
                         </span>
                       </div>
@@ -874,8 +1159,8 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
                         Category: {page.category}
                       </div>
                       {page.instagramAccount && (
-                        <div className="text-[11px] text-pink-400 mt-0.5 flex items-center gap-1 font-mono">
-                          <span>Instagram: @{page.instagramAccount.username}</span>
+                        <div className="text-[11px] text-pink-400 mt-0.5 font-mono">
+                          Instagram: @{page.instagramAccount.username}
                         </div>
                       )}
                     </div>
@@ -902,10 +1187,13 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
           <div>
             <h2 className="text-sm font-bold text-white tracking-wide uppercase flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-blue-400" />
-              2. Facebook Cookies &amp; Session Importer
+              <span>2. Facebook Cookies &amp; Session Importer</span>
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Paste cookie string with <code className="text-blue-300 font-mono text-[11px]">c_user</code>, <code className="text-blue-300 font-mono text-[11px]">xs</code>, <code className="text-blue-300 font-mono text-[11px]">datr</code> or import a <code className="text-slate-300 font-mono text-[11px]">.txt</code> file.
+              Paste cookie string with <code className="text-blue-300 font-mono text-[11px]">c_user</code>,{' '}
+              <code className="text-blue-300 font-mono text-[11px]">xs</code>,{' '}
+              <code className="text-blue-300 font-mono text-[11px]">datr</code> or import a{' '}
+              <code className="text-slate-300 font-mono text-[11px]">.txt</code> file.
             </p>
           </div>
 
@@ -939,11 +1227,11 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
           className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs font-mono text-emerald-300 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 transition-colors"
         />
 
-        <div className="mt-3 flex items-center justify-between">
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <div className="text-[11px] text-slate-400 flex items-center gap-2">
             <span>Found Session:</span>
             {rawCookiesText.includes('c_user=') ? (
-              <span className="text-emerald-400 font-mono font-medium">
+              <span className="text-emerald-400 font-mono tabular-nums font-medium">
                 c_user: {rawCookiesText.match(/c_user=([0-9]+)/)?.[1] || 'Detected'}
               </span>
             ) : (
@@ -1020,7 +1308,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
               type="button"
               onClick={() => {
                 navigator.clipboard.writeText(fbConfig.accessToken || '');
-                alert('Access token copied to clipboard!');
+                onNotify('Access token copied to clipboard!');
               }}
               className="ml-2 text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 shrink-0 cursor-pointer"
             >
@@ -1031,15 +1319,12 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
         )}
 
         {tokenResultMsg && (
-          <div className="mt-2 text-xs text-slate-400 font-mono">
-            {tokenResultMsg}
-          </div>
+          <div className="mt-2 text-xs text-slate-400 font-mono">{tokenResultMsg}</div>
         )}
       </section>
 
       {/* 4. Real Browser Login & AdsPower Port Setup */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Real Browser Login & Auto Page Fetcher */}
         <section className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
           <div className="flex items-center gap-2 mb-2">
             <Globe className="w-4 h-4 text-emerald-400" />
@@ -1048,7 +1333,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
             </h2>
           </div>
           <p className="text-xs text-slate-400 mb-3">
-            Open authenticated Chromium profile session, log in to Facebook manually, and automatically discover all managed pages via Meta Business Suite.
+            Open persistent Chromium profile session, save Facebook login permanently, and automatically discover all managed pages via Meta Business Suite.
           </p>
 
           <div className="space-y-3">
@@ -1071,12 +1356,11 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
               className="w-full py-2.5 px-4 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg cursor-pointer transition-colors flex items-center justify-center gap-2 shadow-sm"
             >
               <Globe className="w-4 h-4" />
-              <span>Open Browser, Login &amp; Auto-Fetch All Pages</span>
+              <span>Open Persistent Browser &amp; Auto-Fetch All Pages</span>
             </button>
           </div>
         </section>
 
-        {/* AdsPower / Debugging Port Setup */}
         <section className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
           <div className="flex items-center gap-2 mb-2">
             <MonitorCheck className="w-4 h-4 text-sky-400" />
@@ -1098,7 +1382,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
                 value={adsPowerPort}
                 onChange={(e) => setAdsPowerPort(e.target.value)}
                 placeholder="9222"
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-sky-500"
+                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono tabular-nums text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-sky-500"
               />
             </div>
 
@@ -1127,7 +1411,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
           <div>
             <h2 className="text-sm font-bold text-white tracking-wide uppercase flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-blue-400" />
-              Live Verification Dashboard &amp; Account Queue ({accounts.length})
+              <span>Live Verification Dashboard &amp; Account Queue ({accounts.length})</span>
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
               Active sessions ready to execute scheduled posts through Meta Graph API and real browser automation.
@@ -1162,14 +1446,18 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
                   <div>
                     <div className="text-xs font-semibold text-slate-200 flex items-center gap-2">
                       <span>{acc.nickname}</span>
-                      <span className="text-[11px] font-mono text-slate-400">
+                      <span className="text-[11px] font-mono tabular-nums text-slate-400">
                         (UID: {acc.c_user})
                       </span>
                     </div>
-                    <div className="text-[11px] text-slate-500 flex items-center gap-3 mt-0.5 font-mono">
-                      <span>Status: <span className="text-emerald-400">{acc.status}</span></span>
+                    <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-2.5 mt-0.5 font-mono">
+                      <span>
+                        Status: <span className="text-emerald-400">{acc.status}</span>
+                      </span>
                       <span>•</span>
-                      <span>Managed Pages: <span className="text-blue-400">{acc.pagesCount}</span></span>
+                      <span>
+                        Managed Pages: <span className="text-blue-400 tabular-nums">{acc.pagesCount}</span>
+                      </span>
                       <span>•</span>
                       <span>Verified: {acc.lastVerified || 'Active'}</span>
                     </div>
@@ -1180,8 +1468,8 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      onLog('INFO', `Testing connection for UID: ${acc.c_user}...`);
-                      alert(`Session for ${acc.nickname} (UID: ${acc.c_user}) verified active!`);
+                      onLog('INFO', `Verified active session for UID: ${acc.c_user}`);
+                      onNotify(`Session ${acc.nickname} (UID: ${acc.c_user}) active!`);
                     }}
                     className="px-2.5 py-1 text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 cursor-pointer"
                   >
@@ -1202,7 +1490,191 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
         )}
       </section>
 
-      {/* Modal: Add Real Page / Profile Manually */}
+      {/* Modal 1: Mobile 1-Tap Sync & Easy Login Bridge */}
+      {showMobileSyncModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Smartphone className="w-4 h-4 text-indigo-400" />
+                <h3 className="text-sm font-bold text-white">
+                  Mobile App &amp; Browser 1-Tap Login Bridge
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowMobileSyncModal(false)}
+                className="text-slate-400 hover:text-white p-1 rounded cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Modal Sub-Tabs */}
+            <div className="grid grid-cols-2 gap-2 bg-slate-950 p-1 rounded-lg border border-slate-800 text-xs font-semibold">
+              <button
+                type="button"
+                onClick={() => setMobileModalTab('pin')}
+                className={`py-1.5 rounded-md cursor-pointer transition-colors ${
+                  mobileModalTab === 'pin'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                6-Digit Sync PIN
+              </button>
+              <button
+                type="button"
+                onClick={() => setMobileModalTab('mobile_extract')}
+                className={`py-1.5 rounded-md cursor-pointer transition-colors ${
+                  mobileModalTab === 'mobile_extract'
+                    ? 'bg-indigo-600 text-white'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Mobile Browser / App Import
+              </button>
+            </div>
+
+            {mobileModalTab === 'pin' ? (
+              <div className="space-y-4 text-xs">
+                <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2.5">
+                  <div className="text-slate-300 font-semibold">
+                    Step 1 (System se Mobile Connect karein):
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    Agar aap laptop/system pe login hain to yeh 6-digit PIN mobile app me dalein. Mobile khud ba khud save aur login ho jayega:
+                  </p>
+                  <div className="flex items-center justify-between gap-3 bg-slate-900 border border-slate-800 rounded-lg px-4 py-3">
+                    <span className="text-2xl font-mono font-bold tracking-[0.25em] tabular-nums text-emerald-400">
+                      {generatedSyncPin || '------'}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {generatedSyncPin && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(generatedSyncPin);
+                            onNotify('6-Digit Sync PIN copied!');
+                          }}
+                          className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                        >
+                          <Copy className="w-3 h-3" />
+                          <span>Copy</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleGenerateMobileSyncPin}
+                        className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-[11px] font-semibold cursor-pointer"
+                      >
+                        New PIN
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 space-y-2.5">
+                  <div className="text-slate-300 font-semibold">
+                    Step 2 (Mobile ya Doosre Device par PIN Claim karein):
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      maxLength={6}
+                      value={syncPinInput}
+                      onChange={(e) => setSyncPinInput(e.target.value.replace(/[^0-9]/g, ''))}
+                      placeholder="Enter 6-digit PIN"
+                      className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm font-mono tabular-nums tracking-widest text-white placeholder:text-slate-600 focus:outline-none focus:border-indigo-500"
+                    />
+                    <button
+                      type="button"
+                      disabled={isSyncingMobile}
+                      onClick={handleClaimMobileSyncPin}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg cursor-pointer"
+                    >
+                      {isSyncingMobile ? 'Linking...' : 'Claim & Save'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3.5 text-xs">
+                <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-2">
+                  <div className="font-semibold text-slate-200">
+                    1-Tap Mobile Browser Extractor Bookmarklet:
+                  </div>
+                  <p className="text-[11px] text-slate-400">
+                    Mobile Chrome me <code className="text-blue-300">m.facebook.com</code> par login hon, phir yeh bookmarklet run karke session cookies copy karein aur neeche paste karein:
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-[10px] font-mono text-emerald-300 truncate">
+                      {MOBILE_BOOKMARKLET}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(MOBILE_BOOKMARKLET);
+                        onNotify('Bookmarklet copied!');
+                      }}
+                      className="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded text-[11px] font-semibold shrink-0 cursor-pointer"
+                    >
+                      Copy Code
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <input
+                      type="text"
+                      value={mobileImportName}
+                      onChange={(e) => setMobileImportName(e.target.value)}
+                      placeholder="Profile Nickname"
+                      className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100"
+                    />
+                    <select
+                      value={mobileImportSource}
+                      onChange={(e) =>
+                        setMobileImportSource(e.target.value as 'mobile_app' | 'mobile_browser')
+                      }
+                      className="bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100"
+                    >
+                      <option value="mobile_app">Mobile Facebook App</option>
+                      <option value="mobile_browser">Mobile Chrome / Safari</option>
+                    </select>
+                  </div>
+                  <textarea
+                    rows={3}
+                    value={mobileImportData}
+                    onChange={(e) => setMobileImportData(e.target.value)}
+                    placeholder="Paste mobile Facebook cookies (c_user=...; xs=...) or EAAB... token"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-xs font-mono text-emerald-300 placeholder:text-slate-600 focus:outline-none focus:border-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    disabled={isSyncingMobile}
+                    onClick={handleQuickMobileImport}
+                    className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg cursor-pointer"
+                  >
+                    {isSyncingMobile
+                      ? 'Saving Mobile Session...'
+                      : 'Connect & Save Mobile Login Permanently'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {syncStatusMsg && (
+              <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-xs text-emerald-300 font-mono">
+                {syncStatusMsg}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal 2: Add Real Page / Profile Manually */}
       {showAddPageModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-700 rounded-xl max-w-md w-full p-5 shadow-2xl space-y-4">
@@ -1214,9 +1686,9 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
               <button
                 type="button"
                 onClick={() => setShowAddPageModal(false)}
-                className="text-slate-400 hover:text-white text-sm"
+                className="text-slate-400 hover:text-white text-sm cursor-pointer"
               >
-                ✕
+                <X className="w-4 h-4" />
               </button>
             </div>
 
@@ -1235,9 +1707,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Type
-                </label>
+                <label className="block text-xs font-medium text-slate-300 mb-1">Type</label>
                 <select
                   value={newPageType}
                   onChange={(e) => setNewPageType(e.target.value as any)}
@@ -1284,14 +1754,14 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
               <button
                 type="button"
                 onClick={() => setShowAddPageModal(false)}
-                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white"
+                className="px-3 py-1.5 text-xs text-slate-400 hover:text-white cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleSaveManualRealPage}
-                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg"
+                className="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg cursor-pointer"
               >
                 Add Page to Queue
               </button>

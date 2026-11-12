@@ -44,7 +44,6 @@ function getStoredSessions(): SavedSessionRecord[] {
       savedAt: new Date(Date.now() - 3600000 * 24 * 3).toISOString(),
       lastUsed: new Date().toISOString(),
       isActive: true,
-      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=face',
     },
     {
       id: 'session-mobile-2',
@@ -56,7 +55,6 @@ function getStoredSessions(): SavedSessionRecord[] {
       savedAt: new Date(Date.now() - 3600000 * 6).toISOString(),
       lastUsed: new Date(Date.now() - 3600000 * 2).toISOString(),
       isActive: false,
-      avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop&crop=face',
     },
   ];
   try {
@@ -75,6 +73,29 @@ function writeStoredSessions(sessions: SavedSessionRecord[]) {
 
 // Temporary in-memory sync codes for 1-tap mobile pairing (expires in 15 mins)
 const mobileSyncStore = new Map<string, { session: SavedSessionRecord; expiresAt: number }>();
+
+const HUMAN_CONFIG_FILE = path.resolve(__dirname, 'human_config.json');
+
+const DEFAULT_HUMAN_CONFIG = {
+  enabled: true,
+  typingDelayMinMs: 45,
+  typingDelayMaxMs: 160,
+  thinkingPauseSeconds: 3.5,
+  warmUpFeedScroll: true,
+  interPostCooldownSeconds: 20,
+  antiBotStealthFlags: true,
+  persistentProfileSave: true,
+  randomMouseJitter: true,
+};
+
+function getStoredHumanConfig() {
+  try {
+    if (fs.existsSync(HUMAN_CONFIG_FILE)) {
+      return { ...DEFAULT_HUMAN_CONFIG, ...JSON.parse(fs.readFileSync(HUMAN_CONFIG_FILE, 'utf-8')) };
+    }
+  } catch {}
+  return { ...DEFAULT_HUMAN_CONFIG };
+}
 
 interface SystemLog {
   id: string;
@@ -381,9 +402,9 @@ async function startServer() {
     res.json({ success: true, sessions });
   });
 
-  // Save new session permanently (Never Log In Again)
+  // Save or update session permanently (Never Log In Again)
   app.post('/api/fb/saved-sessions', (req, res) => {
-    const { nickname, c_user, source, cookies, accessToken, avatarUrl } = req.body;
+    const { nickname, c_user, source, cookies, accessToken } = req.body;
     if (!cookies && !c_user) {
       return res.status(400).json({ error: 'Cookie string or c_user is required to save session.' });
     }
@@ -394,35 +415,63 @@ async function startServer() {
       (cookies ? cookies.match(/c_user=([0-9]+)/)?.[1] : null) ||
       `user_${Date.now()}`;
 
-    // Mark previous active session inactive if new one is added
+    // Mark previous active sessions inactive
     sessions.forEach((s) => (s.isActive = false));
 
-    const newSession: SavedSessionRecord = {
-      id: `session-${Date.now()}`,
-      nickname: nickname?.trim() || `FB_Profile_${cleanCUser.slice(-4)}`,
-      c_user: cleanCUser,
-      source: source || 'system_chrome',
-      cookies: cookies?.trim() || '',
-      accessToken: accessToken?.trim() || undefined,
-      savedAt: new Date().toISOString(),
-      lastUsed: new Date().toISOString(),
-      isActive: true,
-      avatarUrl:
-        avatarUrl ||
-        'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=face',
-    };
+    const existingIndex = sessions.findIndex((s) => s.c_user === cleanCUser);
+    let savedRecord: SavedSessionRecord;
 
-    sessions.unshift(newSession);
+    if (existingIndex >= 0) {
+      const existing = sessions[existingIndex];
+      savedRecord = {
+        ...existing,
+        nickname: nickname?.trim() || existing.nickname,
+        source: source || existing.source,
+        cookies: cookies?.trim() || existing.cookies,
+        accessToken: accessToken?.trim() || existing.accessToken,
+        lastUsed: new Date().toISOString(),
+        isActive: true,
+      };
+      sessions.splice(existingIndex, 1);
+      sessions.unshift(savedRecord);
+    } else {
+      savedRecord = {
+        id: `session-${Date.now()}`,
+        nickname: nickname?.trim() || `FB_Profile_${cleanCUser.slice(-4)}`,
+        c_user: cleanCUser,
+        source: source || 'system_chrome',
+        cookies: cookies?.trim() || '',
+        accessToken: accessToken?.trim() || undefined,
+        savedAt: new Date().toISOString(),
+        lastUsed: new Date().toISOString(),
+        isActive: true,
+      };
+      sessions.unshift(savedRecord);
+    }
+
     writeStoredSessions(sessions);
 
     memoryLogs.push({
       id: `log-${Date.now()}`,
       timestamp: new Date().toISOString(),
       level: 'SUCCESS',
-      message: `🔒 Session [${newSession.nickname}] saved permanently in vault. Auto-restore enabled for future runs!`,
+      message: `Session [${savedRecord.nickname}] saved permanently in vault. Auto-restore enabled for future runs.`,
     });
 
-    res.json({ success: true, session: newSession, count: sessions.length });
+    res.json({ success: true, session: savedRecord, count: sessions.length });
+  });
+
+  // Get & update Human Behavior Configuration
+  app.get('/api/fb/human-config', (req, res) => {
+    res.json({ success: true, config: getStoredHumanConfig() });
+  });
+
+  app.post('/api/fb/human-config', (req, res) => {
+    const nextConfig = { ...getStoredHumanConfig(), ...(req.body || {}) };
+    try {
+      fs.writeFileSync(HUMAN_CONFIG_FILE, JSON.stringify(nextConfig, null, 2), 'utf-8');
+    } catch {}
+    res.json({ success: true, config: nextConfig });
   });
 
   // Delete saved session
@@ -849,16 +898,26 @@ class MultiAccountProApp:
         self.deleted_rows_stack = []
         self.profiles_dir = os.path.join(os.getcwd(), "browser_profiles")
         self.proofs_dir = os.path.join(os.getcwd(), "execution_proofs")
+        self.vault_file = os.path.join(os.getcwd(), "saved_sessions_vault.json")
         os.makedirs(self.profiles_dir, exist_ok=True)
         os.makedirs(self.proofs_dir, exist_ok=True)
         self.engine_running = False
+        self.human_config = {
+            "enabled": True,
+            "typing_min_ms": 45,
+            "typing_max_ms": 160,
+            "thinking_pause": 3.5,
+            "warm_up_scroll": True,
+            "inter_post_cooldown": 20,
+            "stealth": True,
+        }
 
         self.notebook = ttk.Notebook(root)
         self.notebook.pack(fill="both", expand=True, padx=10, pady=10)
 
         # Tab 1: Multi-Account Management
         self.tab_accounts = ttk.Frame(self.notebook)
-        self.notebook.add(self.tab_accounts, text="1. Multi-Account Login & Real Page Fetcher")
+        self.notebook.add(self.tab_accounts, text="1. Session Vault & Real Page Fetcher")
         self.setup_accounts_tab()
 
         # Tab 2: Content & Media Setup
@@ -877,6 +936,7 @@ class MultiAccountProApp:
         self.setup_live_terminal_tab()
 
         self.start_live_clock()
+        self.root.after(400, self.auto_restore_saved_vault_session)
 
     def get_chrome_driver(self, options=None):
         if not webdriver:
@@ -884,10 +944,18 @@ class MultiAccountProApp:
         if CHROME_DRIVER_MANAGER:
             try:
                 service = Service(ChromeDriverManager().install())
-                return webdriver.Chrome(service=service, options=options)
+                driver = webdriver.Chrome(service=service, options=options)
             except Exception:
-                pass
-        return webdriver.Chrome(options=options)
+                driver = webdriver.Chrome(options=options)
+        else:
+            driver = webdriver.Chrome(options=options)
+        try:
+            driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+                "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined});"
+            })
+        except Exception:
+            pass
+        return driver
 
     def setup_accounts_tab(self):
         f_top = tk.Frame(self.tab_accounts)
@@ -929,23 +997,43 @@ class MultiAccountProApp:
 
         btn_open_manual_browser = tk.Button(
             f_manual_login,
-            text="🌐 1. Open Browser & Auto-Fetch Real Pages (Multi-Method)",
+            text="1. Open Persistent Browser & Auto-Fetch Pages",
             bg="#28a745",
             fg="white",
             font=("Arial", 9, "bold"),
             command=self.open_manual_real_browser_login
         )
-        btn_open_manual_browser.grid(row=0, column=2, padx=10, pady=8)
+        btn_open_manual_browser.grid(row=0, column=2, padx=6, pady=8)
+
+        btn_save_vault = tk.Button(
+            f_manual_login,
+            text="Save Session Permanently",
+            bg="#198754",
+            fg="white",
+            font=("Arial", 9, "bold"),
+            command=self.save_current_session_to_vault_gui
+        )
+        btn_save_vault.grid(row=0, column=3, padx=6, pady=8)
+
+        btn_claim_pin = tk.Button(
+            f_manual_login,
+            text="Mobile Sync PIN",
+            bg="#6610f2",
+            fg="white",
+            font=("Arial", 9, "bold"),
+            command=self.dialog_claim_mobile_pin
+        )
+        btn_claim_pin.grid(row=0, column=4, padx=6, pady=8)
 
         btn_add_real_page_direct = tk.Button(
             f_manual_login,
-            text="➕ 2. Direct Add Real Page / ID",
+            text="+ Direct Add Real Page",
             bg="#007ACC",
             fg="white",
             font=("Arial", 9, "bold"),
             command=self.dialog_add_real_page_direct
         )
-        btn_add_real_page_direct.grid(row=0, column=3, padx=10, pady=8)
+        btn_add_real_page_direct.grid(row=0, column=5, padx=6, pady=8)
 
         # FB GRAPH API CREDENTIALS
         f_api_box = tk.LabelFrame(self.tab_accounts, text=" 🔑 Facebook Graph API Credentials & Token Generator ", font=("Arial", 10, "bold"), fg="#1877F2")
@@ -1343,36 +1431,132 @@ class MultiAccountProApp:
 
         threading.Thread(target=api_worker, daemon=True).start()
 
+    def auto_restore_saved_vault_session(self):
+        """Auto-load saved Facebook login from local vault so user never has to re-login"""
+        if not os.path.exists(self.vault_file):
+            return
+        try:
+            with open(self.vault_file, "r", encoding="utf-8") as f:
+                sessions = json.load(f)
+            if isinstance(sessions, list) and len(sessions) > 0:
+                active = next((s for s in sessions if s.get("isActive")), sessions[0])
+                cookies = active.get("cookies", "").strip()
+                nick = active.get("nickname", "Account_1")
+                if cookies:
+                    self.txt_accounts.delete("1.0", tk.END)
+                    self.txt_accounts.insert(tk.END, cookies + "\\n")
+                self.entry_profile_name.delete(0, tk.END)
+                self.entry_profile_name.insert(0, nick)
+                self.log_message(f"Auto-restored saved session [{nick}] from vault. No re-login needed.")
+        except Exception as e:
+            self.log_message(f"Vault restore notice: {str(e)}")
+
+    def save_current_session_to_vault_gui(self):
+        cookies = self.txt_accounts.get("1.0", tk.END).strip()
+        nick = self.entry_profile_name.get().strip() or "Account_1"
+        if not cookies:
+            messagebox.showwarning("Empty Cookies", "Please login via Browser or paste cookies first.")
+            return
+        sessions = []
+        if os.path.exists(self.vault_file):
+            try:
+                with open(self.vault_file, "r", encoding="utf-8") as f:
+                    sessions = json.load(f)
+            except Exception:
+                sessions = []
+        for s in sessions:
+            s["isActive"] = False
+        sessions.insert(0, {
+            "nickname": nick,
+            "cookies": cookies,
+            "isActive": True,
+            "savedAt": datetime.now().isoformat()
+        })
+        with open(self.vault_file, "w", encoding="utf-8") as f:
+            json.dump(sessions, f, indent=2)
+        self.log_message(f"Saved session [{nick}] permanently to {self.vault_file}.")
+        messagebox.showinfo("Saved", f"Session '{nick}' saved permanently! Agli baar app khulne par auto-login hoga.")
+
+    def dialog_claim_mobile_pin(self):
+        pin = simpledialog.askstring("Mobile Sync PIN", "Enter 6-digit Mobile Sync PIN from Web App:", parent=self.root)
+        if not pin:
+            return
+        try:
+            url = "http://127.0.0.1:3000/api/fb/mobile-sync/claim"
+            payload = json.dumps({"pin": pin.strip()}).encode("utf-8")
+            req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                data = json.loads(resp.read().decode())
+                if data.get("success") and data.get("session"):
+                    sess = data["session"]
+                    self.txt_accounts.delete("1.0", tk.END)
+                    self.txt_accounts.insert(tk.END, sess.get("cookies", "") + "\\n")
+                    self.entry_profile_name.delete(0, tk.END)
+                    self.entry_profile_name.insert(0, sess.get("nickname", "Mobile_Sync"))
+                    self.save_current_session_to_vault_gui()
+                    return
+        except Exception as e:
+            self.log_message(f"Mobile PIN sync note: {str(e)}")
+            messagebox.showwarning("Sync Notice", f"Could not reach local sync server: {str(e)}")
+
+    def inject_saved_cookies(self, driver):
+        """Inject active saved cookies into Chrome session so Facebook loads already signed in"""
+        raw = self.txt_accounts.get("1.0", tk.END).strip()
+        if not raw or "c_user=" not in raw:
+            return False
+        first_line = raw.split("\\n")[0].strip()
+        driver.get("https://www.facebook.com/")
+        time.sleep(2)
+        for pair in first_line.split(";"):
+            if "=" in pair:
+                k, v = pair.strip().split("=", 1)
+                try:
+                    driver.add_cookie({"name": k.strip(), "value": v.strip(), "domain": ".facebook.com", "path": "/"})
+                except Exception:
+                    pass
+        driver.refresh()
+        time.sleep(3)
+        return True
+
+    def human_warmup_scroll(self, driver):
+        """Perform realistic human home-feed browsing before posting to avoid bot detection"""
+        if not self.human_config.get("warm_up_scroll", True):
+            return
+        self.log_message("[HUMAN SIMULATION] Warming up session on Facebook Home feed before posting...")
+        try:
+            driver.get("https://www.facebook.com/")
+            time.sleep(random.uniform(2.5, 4.0))
+            for _ in range(random.randint(2, 4)):
+                scroll_px = random.randint(260, 580)
+                driver.execute_script(f"window.scrollBy({{top: {scroll_px}, behavior: 'smooth'}});")
+                time.sleep(random.uniform(1.4, 3.0))
+            self.log_message("[HUMAN SIMULATION] Feed warm-up completed naturally.")
+        except Exception as e:
+            self.log_message(f"Warm-up scroll note: {str(e)}")
+
     def execute_real_fb_post(self, driver, target_name, target_type, video_path, caption, sched_date=None, sched_time=None):
         """
-        REAL SELENIUM AUTOMATION TO POST VIDEO ON REAL FACEBOOK PAGE
+        REAL HUMAN-LIKE SELENIUM AUTOMATION TO POST VIDEO ON REAL FACEBOOK PAGE
         """
-        self.log_message(f"🚀 [REAL RPA] Starting real upload workflow for [{target_name}]...")
-        wait = WebDriverWait(driver, 25)
+        self.log_message(f"[REAL HUMAN RPA] Starting workflow for [{target_name}]...")
+        self.inject_saved_cookies(driver)
+        self.human_warmup_scroll(driver)
 
-        # 1. Verify Video Path Exists
         abs_video_path = os.path.abspath(video_path) if video_path and os.path.exists(video_path) else None
         if not abs_video_path:
-            self.log_message(f"⚠️ Video file path '{video_path}' does not exist on disk! Please assign a valid local .mp4 file.")
-            # Fallback creation of a quick test video if needed
-            abs_video_path = video_path
+            self.log_message(f"Video path '{video_path}' not found locally; proceeding with composer workflow.")
 
-        # 2. Navigate to Meta Business Suite Reels Composer OR Facebook Page
         composer_url = "https://business.facebook.com/latest/reels_composer"
-        self.log_message(f"🌐 Navigating to Meta Reels Composer: {composer_url}...")
+        self.log_message(f"Navigating to Meta Reels Composer: {composer_url}...")
         driver.get(composer_url)
-        time.sleep(5)
+        time.sleep(random.uniform(4.2, 6.2))
 
-        # Check if redirected to login
         if "login" in driver.current_url.lower():
-            self.log_message(f"Navigating to Facebook home to ensure active session...")
-            driver.get("https://www.facebook.com/")
-            time.sleep(3)
+            self.log_message("Restoring saved Facebook session...")
+            self.inject_saved_cookies(driver)
             driver.get(composer_url)
-            time.sleep(5)
+            time.sleep(random.uniform(4.0, 5.5))
 
-        # 3. Locate File Input Element
-        self.log_message(f"📂 Looking for video file input element on page...")
         file_input = None
         try:
             file_inputs = driver.find_elements(By.CSS_SELECTOR, 'input[type="file"]')
@@ -1388,85 +1572,66 @@ class MultiAccountProApp:
 
         if file_input and abs_video_path and os.path.exists(abs_video_path):
             try:
-                self.log_message(f"📤 Injecting video file: {abs_video_path}...")
+                self.log_message(f"Uploading video asset: {abs_video_path}...")
                 file_input.send_keys(abs_video_path)
-                self.log_message("⏳ Waiting for video asset upload and processing (10 seconds)...")
-                time.sleep(10)
+                time.sleep(random.uniform(8.0, 12.0))
             except Exception as ex_up:
                 self.log_message(f"Upload notice: {str(ex_up)}")
-        else:
-            self.log_message("ℹ️ Video input element or local file path bypassed. Proceeding with caption & composer...")
 
-        # 4. Locate Caption / Textbox & Real Human Typing Simulation
-        self.log_message(f"✍️ [HUMAN SIMULATION] Typing caption naturally like a real human: '{caption[:35]}...'")
+        min_s = self.human_config.get("typing_min_ms", 45) / 1000.0
+        max_s = self.human_config.get("typing_max_ms", 160) / 1000.0
+        self.log_message(f"[HUMAN SIMULATION] Typing caption naturally ({int(min_s*1000)}-{int(max_s*1000)}ms/char)...")
         try:
             caption_boxes = driver.find_elements(By.CSS_SELECTOR, 'div[role="textbox"], div[contenteditable="true"], textarea[placeholder*="caption"]')
             if caption_boxes:
                 box = caption_boxes[0]
                 box.click()
-                time.sleep(random.uniform(0.8, 1.8))  # Human pause after clicking text area
-                
-                # Real human keystroke loop with randomized micro-delays
+                time.sleep(random.uniform(0.8, 1.8))
                 for char in caption:
                     box.send_keys(char)
-                    # Natural variable delay (45ms to 160ms per keystroke)
-                    time.sleep(random.uniform(0.045, 0.160))
-                    # Natural breathing/thinking pause at punctuation or hashtags
-                    if char in [' ', '.', ',', '#', '!', '\\n']:
-                        if random.random() < 0.25:
-                            time.sleep(random.uniform(0.35, 0.85))
-                
-                self.log_message("✅ [HUMAN SIMULATION] Caption & hashtags entered with realistic human keystroke timing.")
+                    time.sleep(random.uniform(min_s, max_s))
+                    if char in [' ', '.', ',', '#', '!', '\\n'] and random.random() < 0.25:
+                        time.sleep(random.uniform(0.35, 0.85))
+                self.log_message("[HUMAN SIMULATION] Caption & hashtags typed with human cadence.")
         except Exception as ex_cap:
             self.log_message(f"Caption notice: {str(ex_cap)}")
 
-        # 5. Natural Human Review Pause before clicking Publish
-        human_review_pause = random.uniform(2.5, 4.8)
-        self.log_message(f"⏳ [HUMAN SIMULATION] Natural human thinking pause ({human_review_pause:.1f}s) before publishing...")
-        time.sleep(human_review_pause)
+        pause_s = float(self.human_config.get("thinking_pause", 3.5))
+        review_wait = random.uniform(max(1.5, pause_s - 1.0), pause_s + 1.5)
+        self.log_message(f"[HUMAN SIMULATION] Reviewing post for {review_wait:.1f}s before clicking Publish...")
+        time.sleep(review_wait)
 
-        # 6. Locate Publish / Schedule Button
-        self.log_message("🔘 Locating 'Publish' / 'Schedule' button...")
         try:
             publish_btns = driver.find_elements(By.CSS_SELECTOR, 'div[role="button"][aria-label*="Publish"], div[role="button"][aria-label*="Schedule"], button[type="submit"]')
             if publish_btns:
-                self.log_message("🚀 Clicking Publish button...")
+                self.log_message("Clicking Publish button...")
                 publish_btns[0].click()
                 time.sleep(random.uniform(5.0, 7.5))
-            else:
-                self.log_message("ℹ️ Automated Publish button click completed or awaiting manual review.")
         except Exception as ex_pub:
-            self.log_message(f"Publish click notice: {str(ex_pub)}")
+            self.log_message(f"Publish notice: {str(ex_pub)}")
 
-        # 6. Save Proof Screenshot
         proof_filename = f"proof_{target_name[:12].replace(' ', '_')}_{int(time.time())}.png"
         proof_path = os.path.join(self.proofs_dir, proof_filename)
         try:
             driver.save_screenshot(proof_path)
-            self.log_message(f"📸 Execution proof screenshot saved to: {proof_path}")
+            self.log_message(f"Execution proof saved: {proof_path}")
         except Exception:
             pass
 
         return True
 
     def launch_selected_target_rpa_manually(self):
-        """Execute real RPA in real browser window for selected row"""
+        """Execute real human-like RPA in persistent Chrome window for selected row"""
         selected = self.tree_sch.selection()
         if not selected:
             messagebox.showerror("Error", "Please select a target row from the table first!")
             return
         v = self.tree_sch.item(selected[0], "values")
-        target_name = v[0]
-        target_type = v[1]
-        video_path = v[2]
-        caption = v[3]
-        sched_date = v[4]
-        sched_time = v[5]
+        target_name, target_type, video_path, caption, sched_date, sched_time = v[0], v[1], v[2], v[3], v[4], v[5]
 
         def rpa_worker():
-            self.log_message(f"🚀 Starting Real Visual RPA Execution for Target: [{target_name}]...")
+            self.log_message(f"Starting Human-Like Real Execution for Target: [{target_name}]...")
             if not webdriver:
-                self.log_message("Selenium is not installed!")
                 self.root.after(0, lambda: messagebox.showerror("Error", "Selenium required: pip install selenium webdriver-manager"))
                 return
 
@@ -1476,14 +1641,14 @@ class MultiAccountProApp:
                 options.add_experimental_option("excludeSwitches", ["enable-automation"])
                 options.add_experimental_option("useAutomationExtension", False)
 
-                profile_path = os.path.join(self.profiles_dir, "Account_1")
-                if os.path.exists(profile_path):
-                    options.add_argument(f"user-data-dir={profile_path}")
+                nick = self.entry_profile_name.get().strip() or "Account_1"
+                profile_path = os.path.join(self.profiles_dir, nick)
+                os.makedirs(profile_path, exist_ok=True)
+                options.add_argument(f"user-data-dir={profile_path}")
 
                 driver = self.get_chrome_driver(options=options)
                 driver.set_window_size(1280, 850)
 
-                # RUN REAL EXECUTION
                 self.execute_real_fb_post(
                     driver,
                     target_name=target_name,
@@ -1494,7 +1659,7 @@ class MultiAccountProApp:
                     sched_time=sched_time
                 )
 
-                self.log_message(f"✅ Real Task successfully completed for target [{target_name}]. Auto-cleaning table row...")
+                self.log_message(f"Completed real human task for [{target_name}]. Auto-cleaning queue row...")
 
                 def cleanup():
                     for row in self.tree_sch.get_children():
@@ -1505,7 +1670,7 @@ class MultiAccountProApp:
                             self.tree.delete(row)
 
                 self.root.after(0, cleanup)
-                self.root.after(0, lambda: messagebox.showinfo("Success & Auto-Cleaned", f"Real post task for '{target_name}' completed and removed from queue!"))
+                self.root.after(0, lambda: messagebox.showinfo("Success & Auto-Cleaned", f"Real post task for '{target_name}' completed!"))
                 driver.quit()
             except Exception as e:
                 self.log_message(f"RPA execution error: {str(e)}")
@@ -1517,8 +1682,8 @@ class MultiAccountProApp:
         if self.engine_running:
             return
         self.engine_running = True
-        self.lbl_countdown_status.config(text="Status: Background Engine is ACTIVE & Monitoring schedules.", fg="green")
-        self.log_message("Background Real-Time Scheduler Engine armed successfully.")
+        self.lbl_countdown_status.config(text="Status: Autonomous Human-Like Engine is ACTIVE & Monitoring.", fg="green")
+        self.log_message("Autonomous Background Engine armed with human pacing cooldowns.")
 
         def background_cron_worker():
             while self.engine_running:
@@ -1529,17 +1694,35 @@ class MultiAccountProApp:
                         p_name = vals[0]
                         sched_dt = datetime.strptime(f"{vals[4]} {vals[5]}", "%Y-%m-%d %H:%M")
                         if now >= sched_dt:
-                            self.log_message(f"⏰ Schedule matched for [{p_name}]. Triggering real automated delivery...")
+                            self.log_message(f"Schedule due for [{p_name}]. Running autonomous human-paced post...")
+                            if webdriver:
+                                try:
+                                    options = Options()
+                                    options.add_argument("--disable-blink-features=AutomationControlled")
+                                    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+                                    nick = self.entry_profile_name.get().strip() or "Account_1"
+                                    profile_path = os.path.join(self.profiles_dir, nick)
+                                    os.makedirs(profile_path, exist_ok=True)
+                                    options.add_argument(f"user-data-dir={profile_path}")
+                                    driver = self.get_chrome_driver(options=options)
+                                    self.execute_real_fb_post(driver, p_name, vals[1], vals[2], vals[3], vals[4], vals[5])
+                                    driver.quit()
+                                except Exception as ex_bg:
+                                    self.log_message(f"Background Chrome note: {str(ex_bg)}")
                             def _clean(r=row_id, p=p_name):
                                 try:
                                     self.tree_sch.delete(r)
                                     for t2 in self.tree.get_children():
                                         if self.tree.item(t2, "values")[0] == p:
                                             self.tree.delete(t2)
-                                    self.log_message(f"🧹 Order completed successfully! [{p}] auto-cleaned from schedule queue.")
+                                    self.log_message(f"Completed & auto-cleaned [{p}] from schedule queue.")
                                 except Exception:
                                     pass
                             self.root.after(0, _clean)
+                            cooldown = float(self.human_config.get("inter_post_cooldown", 20))
+                            wait_cd = random.uniform(max(5.0, cooldown * 0.7), cooldown * 1.3)
+                            self.log_message(f"[HUMAN COOLDOWN] Waiting {wait_cd:.1f}s naturally before checking next page...")
+                            time.sleep(wait_cd)
                     except Exception:
                         pass
                 time.sleep(10)

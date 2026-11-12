@@ -76,6 +76,8 @@ export interface HumanBehaviorConfig {
   typingDelayMinMs: number;
   typingDelayMaxMs: number;
   thinkingPauseSeconds: number;
+  warmUpFeedScroll: boolean;
+  interPostCooldownSeconds: number;
   antiBotStealthFlags: boolean;
   persistentProfileSave: boolean;
   randomMouseJitter: boolean;

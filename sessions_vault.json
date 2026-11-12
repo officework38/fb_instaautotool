@@ -1,0 +1,23 @@
+[
+  {
+    "id": "session-main-1",
+    "nickname": "BestYou_Personal_Profile",
+    "c_user": "61561547737841",
+    "source": "system_chrome",
+    "cookies": "datr=z2Niau_VrYxapXvkjmDInemI; sb=z2NianZvQAhzQHGIE8qDKfpJ; c_user=61561547737841; xs=6%3AgKqgsWap84Fqfw%3A2%3A1784833381%3A-1%3A-1%3A%3AAcx92WMHlhPDATmFIp-VnWc3J6zQDfFhQharTGz0FA;",
+    "accessToken": "EAABwz9842a84920192849012849012ZDZD",
+    "savedAt": "2026-11-09T17:54:52.185Z",
+    "lastUsed": "2026-11-12T18:35:00.000Z",
+    "isActive": true
+  },
+  {
+    "id": "session-mobile-2",
+    "nickname": "Mobile_FB_App_Sync",
+    "c_user": "100084920194821",
+    "source": "mobile_app",
+    "cookies": "c_user=100084920194821; xs=4%3A5mYq932K:2:1784833381:-1:-1; datr=k9Wiauz_VrX;",
+    "savedAt": "2026-11-12T11:54:52.185Z",
+    "lastUsed": "2026-11-12T18:30:00.000Z",
+    "isActive": false
+  }
+]

@@ -7,18 +7,19 @@ import {
   Eye,
   Trash2,
   Undo2,
-  CheckCircle2,
-  AlertCircle,
   Video,
-  Sparkles,
+  Lock,
+  Bot,
 } from 'lucide-react';
-import { TargetItem } from '../types';
+import { HumanBehaviorConfig, SavedSession, TargetItem } from '../types';
 
 interface SchedulerTabProps {
   targets: TargetItem[];
   setTargets: React.Dispatch<React.SetStateAction<TargetItem[]>>;
   isEngineRunning: boolean;
   onToggleEngine: () => void;
+  activeSession: SavedSession | null;
+  humanConfig: HumanBehaviorConfig;
   deletedStack: TargetItem[];
   setDeletedStack: React.Dispatch<React.SetStateAction<TargetItem[]>>;
   onLaunchRpa: (target: TargetItem) => void;
@@ -31,6 +32,8 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
   setTargets,
   isEngineRunning,
   onToggleEngine,
+  activeSession,
+  humanConfig,
   deletedStack,
   setDeletedStack,
   onLaunchRpa,
@@ -66,7 +69,6 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
     onLog('SUCCESS', `Restored [${last.profileName}] to scheduler queue.`);
   };
 
-  // Format date time string
   const formatClock = (d: Date) => {
     const pad = (n: number) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(
@@ -74,13 +76,12 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
     )}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
   };
 
-  // Calculate time remaining for target
   const getTimeRemainingStr = (target: TargetItem) => {
     try {
       const targetDt = new Date(`${target.date}T${target.time}:00`);
       const diffMs = targetDt.getTime() - currentTime.getTime();
       if (diffMs <= 0) {
-        return '⏰ Due Now / Past';
+        return 'Due Now';
       }
       const diffSecs = Math.floor(diffMs / 1000);
       const hours = Math.floor(diffSecs / 3600);
@@ -95,7 +96,7 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
-      {/* 1. Live System Clock & Engine Status */}
+      {/* 1. Live System Clock, Saved Session & Human Cadence Status */}
       <section className="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-sm">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
@@ -114,9 +115,7 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
 
           <div className="flex items-center gap-4">
             <div className="text-right">
-              <div className="text-xs font-medium text-slate-400">
-                Engine State
-              </div>
+              <div className="text-xs font-medium text-slate-400">Engine State</div>
               <div
                 className={`text-sm font-semibold flex items-center gap-1.5 justify-end ${
                   isEngineRunning ? 'text-emerald-400' : 'text-rose-400'
@@ -125,7 +124,7 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
                 {isEngineRunning ? (
                   <>
                     <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                    <span>ACTIVE &amp; Monitoring (30s Cron)</span>
+                    <span>ACTIVE (Sequential Human Cron)</span>
                   </>
                 ) : (
                   <>
@@ -159,6 +158,38 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
             </button>
           </div>
         </div>
+
+        {/* Hairline Status Strip: Active Saved Session + Human Cadence */}
+        <div className="mt-4 pt-3.5 border-t border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-2 text-slate-300">
+            <Lock className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span>
+              Vault Session:{' '}
+              {activeSession ? (
+                <span className="font-semibold text-emerald-300 font-mono">
+                  {activeSession.nickname} (c_user: {activeSession.c_user})
+                </span>
+              ) : (
+                <span className="text-amber-300">No session selected (connect in Accounts &amp; Vault)</span>
+              )}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 text-[11px] font-mono tabular-nums text-slate-400">
+            <span className="flex items-center gap-1.5 text-purple-300">
+              <Bot className="w-3.5 h-3.5 text-purple-400" />
+              Human Mode: {humanConfig.enabled ? 'ON' : 'OFF'}
+            </span>
+            <span>•</span>
+            <span>
+              Typing: {humanConfig.typingDelayMinMs}–{humanConfig.typingDelayMaxMs}ms/char
+            </span>
+            <span>•</span>
+            <span>Feed Warm-up: {humanConfig.warmUpFeedScroll ? 'ON' : 'OFF'}</span>
+            <span>•</span>
+            <span>Cooldown: {humanConfig.interPostCooldownSeconds}s</span>
+          </div>
+        </div>
       </section>
 
       {/* 2. Advanced Target Inspector & Master Scheduler Grid */}
@@ -170,7 +201,7 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
               Advanced Target Inspector &amp; On-Demand RPA Launcher
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Click any row below to inspect target details or launch live visual RPA execution.
+              Click any row below to inspect target details or launch live visual human-paced RPA execution.
             </p>
           </div>
 
@@ -225,9 +256,7 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
                       key={item.id}
                       onClick={() => setSelectedTargetId(item.id)}
                       className={`cursor-pointer transition-colors ${
-                        isSelected
-                          ? 'bg-blue-600/15 border-l-2 border-blue-500'
-                          : 'hover:bg-slate-800/40'
+                        isSelected ? 'bg-blue-600/15 text-white' : 'hover:bg-slate-800/40'
                       }`}
                     >
                       <td className="py-2.5 px-3 font-semibold text-slate-200">
@@ -301,8 +330,8 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
         {/* Selected Target Live Inspector Drawer */}
         {selectedTarget && (
           <div className="mt-4 p-4 rounded-xl bg-slate-950 border border-slate-800">
-            <div className="flex items-center justify-between mb-3 border-b border-slate-800/80 pb-2">
-              <div className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3 border-b border-slate-800/80 pb-2">
+              <div className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-2 flex-wrap">
                 <Search className="w-3.5 h-3.5 text-blue-400" />
                 <span>Selected Target Inspector:</span>
                 <span className="text-blue-400">{selectedTarget.profileName}</span>
@@ -314,7 +343,12 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => onPreviewVideo(selectedTarget.videoPath, selectedTarget.videoName || selectedTarget.profileName)}
+                  onClick={() =>
+                    onPreviewVideo(
+                      selectedTarget.videoPath,
+                      selectedTarget.videoName || selectedTarget.profileName
+                    )
+                  }
                   className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-medium rounded flex items-center gap-1.5 cursor-pointer"
                 >
                   <Video className="w-3 h-3 text-blue-400" />
@@ -340,7 +374,7 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
 
               <div>
                 <span className="text-slate-500 block text-[11px]">Scheduled Trigger:</span>
-                <span className="text-emerald-400 font-bold">
+                <span className="text-emerald-400 font-bold tabular-nums">
                   {selectedTarget.date} at {selectedTarget.time} ({getTimeRemainingStr(selectedTarget)})
                 </span>
               </div>
