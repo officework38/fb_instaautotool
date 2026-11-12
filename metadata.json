@@ -1,0 +1,6 @@
+{
+  "name": "FB & Insta Pro Auto-Scheduler v40.0",
+  "description": "Multi-Account Social Media Automation, Bulk Media Scheduling & Live RPA Execution Studio with Facebook Graph API integration.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
