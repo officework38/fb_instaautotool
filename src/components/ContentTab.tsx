@@ -16,9 +16,11 @@ import {
   Hash,
   RefreshCw,
   FolderOpen,
+  Image as ImageIcon,
 } from 'lucide-react';
-import { TargetItem, TargetType } from '../types';
+import { TargetItem } from '../types';
 import { SAMPLE_VIDEOS } from '../data/initialData';
+import { detectIsImage } from './MediaPreviewModal';
 
 function getFutureDateTime(offsetMinutes = 3): { date: string; time: string } {
   const dt = new Date(Date.now() + offsetMinutes * 60 * 1000);
@@ -157,42 +159,76 @@ export const ContentTab: React.FC<ContentTabProps> = ({
     );
   };
 
-  // 3. Import Video Paths from .txt
+  // Helper to apply .txt lines (videos or pictures) across targets
+  const applyTextLinesToTargets = (content: string, singleTargetId?: string) => {
+    const lines = content
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    if (lines.length === 0) {
+      setTimeStatusMsg('The selected text file is empty.');
+      return;
+    }
+
+    if (targets.length === 0) {
+      setTimeStatusMsg('No targets in table! Please add targets or verify accounts first.');
+      return;
+    }
+
+    if (singleTargetId) {
+      const assignedPath = lines[0];
+      const fileName = assignedPath.split(/[/\\]/).pop() || assignedPath;
+      const mediaType: 'image' | 'video' = detectIsImage(assignedPath, fileName)
+        ? 'image'
+        : 'video';
+      setTargets((prev) =>
+        prev.map((t) =>
+          t.id === singleTargetId
+            ? { ...t, videoPath: assignedPath, videoName: fileName, mediaType }
+            : t
+        )
+      );
+      setTimeStatusMsg(
+        `Assigned ${mediaType === 'image' ? 'picture' : 'video'} "${fileName}" from .txt file.`
+      );
+      onLog('SUCCESS', `Assigned [${fileName}] (${mediaType}) from .txt to target.`);
+      return;
+    }
+
+    setTargets((prev) =>
+      prev.map((item, idx) => {
+        const assignedPath = lines[idx % lines.length];
+        const fileName = assignedPath.split(/[/\\]/).pop() || assignedPath;
+        const mediaType: 'image' | 'video' = detectIsImage(assignedPath, fileName)
+          ? 'image'
+          : 'video';
+        return {
+          ...item,
+          videoPath: assignedPath,
+          videoName: fileName,
+          mediaType,
+        };
+      })
+    );
+
+    setTimeStatusMsg(
+      `Assigned ${lines.length} media path(s) (Video / Picture) from .txt across ${targets.length} target(s).`
+    );
+    onLog(
+      'SUCCESS',
+      `Assigned ${lines.length} video/picture path(s) from .txt across table targets.`
+    );
+  };
+
+  // 3. Import Media Paths (Videos & Pictures) from .txt
   const handleImportVideoPathsFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
     reader.onload = (event) => {
-      const content = (event.target?.result as string) || '';
-      const lines = content
-        .split('\n')
-        .map((l) => l.trim())
-        .filter(Boolean);
-
-      if (lines.length === 0) {
-        setTimeStatusMsg('The selected text file is empty.');
-        return;
-      }
-
-      if (targets.length === 0) {
-        setTimeStatusMsg('No targets in table! Please add targets or verify accounts first.');
-        return;
-      }
-
-      setTargets((prev) =>
-        prev.map((item, idx) => {
-          const assignedPath = lines[idx % lines.length];
-          const fileName = assignedPath.split(/[/\\]/).pop() || assignedPath;
-          return {
-            ...item,
-            videoPath: assignedPath,
-            videoName: fileName,
-          };
-        })
-      );
-
-      onLog('SUCCESS', `Assigned ${lines.length} video path(s) across table targets.`);
+      applyTextLinesToTargets((event.target?.result as string) || '');
     };
     reader.readAsText(file);
     e.target.value = '';
@@ -208,13 +244,14 @@ export const ContentTab: React.FC<ContentTabProps> = ({
           ...item,
           videoPath: sample.path,
           videoName: sample.name,
+          mediaType: 'video',
         };
       })
     );
     onLog('SUCCESS', `Auto-assigned high-quality video reels to all ${targets.length} targets.`);
   };
 
-  // 4b. Choose real video file(s) from device for all targets
+  // 4b. Choose Video(s), Picture(s), or .txt file from 1 single button for all targets
   const handleChooseVideosForAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
@@ -225,27 +262,66 @@ export const ContentTab: React.FC<ContentTabProps> = ({
     }
 
     const fileList: File[] = Array.from(files);
+
+    // If user selected .txt file(s) from this same button, parse paths (video + picture)
+    const txtFiles = fileList.filter((f) => f.name.toLowerCase().endsWith('.txt'));
+    const mediaFiles = fileList.filter((f) => !f.name.toLowerCase().endsWith('.txt'));
+
+    if (txtFiles.length > 0 && mediaFiles.length === 0) {
+      Promise.all(txtFiles.map((f) => f.text())).then((contents) => {
+        applyTextLinesToTargets(contents.join('\n'));
+      });
+      e.target.value = '';
+      return;
+    }
+
+    const targetFiles = mediaFiles.length > 0 ? mediaFiles : fileList;
     setTargets((prev) =>
       prev.map((item, idx) => {
-        const picked = fileList[idx % fileList.length];
+        const picked = targetFiles[idx % targetFiles.length];
         const objectUrl = URL.createObjectURL(picked);
+        const mediaType: 'image' | 'video' =
+          picked.type.startsWith('image/') || detectIsImage(picked.name, picked.name)
+            ? 'image'
+            : 'video';
         return {
           ...item,
           videoPath: objectUrl,
           videoName: picked.name,
+          mediaType,
         };
       })
     );
-    setTimeStatusMsg(`Assigned ${fileList.length} chosen video(s) across ${targets.length} target(s).`);
-    onLog('SUCCESS', `User chose ${fileList.length} local video file(s) and assigned across queue.`);
+    setTimeStatusMsg(
+      `Assigned ${targetFiles.length} chosen media file(s) (Video/Picture) across ${targets.length} target(s).`
+    );
+    onLog(
+      'SUCCESS',
+      `User chose ${targetFiles.length} local media file(s) (Video/Picture) and assigned across queue.`
+    );
     e.target.value = '';
   };
 
-  // 4c. Choose a real video file from device for a single table row
+  // 4c. Choose Video, Picture, or .txt file from 1 single button for a single table row
   const handleChooseRowVideo = (targetId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (file.name.toLowerCase().endsWith('.txt')) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        applyTextLinesToTargets((event.target?.result as string) || '', targetId);
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+      return;
+    }
+
     const objectUrl = URL.createObjectURL(file);
+    const mediaType: 'image' | 'video' =
+      file.type.startsWith('image/') || detectIsImage(file.name, file.name)
+        ? 'image'
+        : 'video';
     setTargets((prev) =>
       prev.map((t) =>
         t.id === targetId
@@ -253,12 +329,18 @@ export const ContentTab: React.FC<ContentTabProps> = ({
               ...t,
               videoPath: objectUrl,
               videoName: file.name,
+              mediaType,
             }
           : t
       )
     );
-    setTimeStatusMsg(`Selected video "${file.name}" for target.`);
-    onLog('INFO', `Selected local video [${file.name}] for target ID: ${targetId}.`);
+    setTimeStatusMsg(
+      `Selected ${mediaType === 'image' ? 'picture' : 'video'} "${file.name}" for target.`
+    );
+    onLog(
+      'INFO',
+      `Selected local ${mediaType} [${file.name}] for target ID: ${targetId}.`
+    );
     e.target.value = '';
   };
 
@@ -480,13 +562,16 @@ export const ContentTab: React.FC<ContentTabProps> = ({
 
           {/* Quick Action Buttons */}
           <div className="flex flex-wrap items-center gap-2">
-            <label className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg cursor-pointer flex items-center gap-1.5 shadow-sm">
+            <label
+              title="Choose Video(s), Picture(s), or a .txt file of video/picture paths"
+              className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg cursor-pointer flex items-center gap-1.5 shadow-sm"
+            >
               <FolderOpen className="w-3.5 h-3.5" />
-              <span>Choose Video(s)</span>
+              <span>Choose Media (Video / Pic / .txt)</span>
               <input
                 type="file"
                 multiple
-                accept="video/*,.mp4,.mov,.mkv,.avi,.webm"
+                accept="video/*,image/*,.mp4,.mov,.mkv,.avi,.webm,.jpg,.jpeg,.png,.webp,.gif,.bmp,.txt"
                 onChange={handleChooseVideosForAll}
                 className="hidden"
               />
@@ -502,9 +587,12 @@ export const ContentTab: React.FC<ContentTabProps> = ({
               <span>Assign Sample Reels</span>
             </button>
 
-            <label className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-medium rounded-lg cursor-pointer flex items-center gap-1.5">
+            <label
+              title="Import a .txt file containing video or picture file paths (1 path per line)"
+              className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 text-xs font-medium rounded-lg cursor-pointer flex items-center gap-1.5"
+            >
               <Upload className="w-3.5 h-3.5" />
-              <span>Import Video .txt</span>
+              <span>Import Media .txt</span>
               <input
                 type="file"
                 accept=".txt"
@@ -574,7 +662,7 @@ export const ContentTab: React.FC<ContentTabProps> = ({
                   </th>
                   <th className="py-2.5 px-3">Profile / Page Name</th>
                   <th className="py-2.5 px-3 text-center">Type</th>
-                  <th className="py-2.5 px-3">Assigned Video / Media</th>
+                  <th className="py-2.5 px-3">Assigned Media (Video / Pic)</th>
                   <th className="py-2.5 px-3">Caption</th>
                   <th className="py-2.5 px-3 text-center">Date</th>
                   <th className="py-2.5 px-3 text-center">Time</th>
@@ -584,6 +672,9 @@ export const ContentTab: React.FC<ContentTabProps> = ({
               <tbody className="divide-y divide-slate-800 bg-slate-950/30">
                 {targets.map((item) => {
                   const isSelected = selectedIds.includes(item.id);
+                  const isImage =
+                    item.mediaType === 'image' ||
+                    detectIsImage(item.videoPath, item.videoName);
                   return (
                     <tr
                       key={item.id}
@@ -620,16 +711,27 @@ export const ContentTab: React.FC<ContentTabProps> = ({
                         </span>
                       </td>
 
-                      <td className="py-2.5 px-3 max-w-[260px]">
+                      <td className="py-2.5 px-3 max-w-[280px]">
                         <div className="flex items-center gap-1.5">
                           <button
                             type="button"
                             onClick={() => onPreviewVideo(item.videoPath, item.videoName || item.profileName)}
-                            className="p-1 rounded bg-blue-500/10 text-blue-400 hover:bg-blue-500/20 shrink-0 cursor-pointer"
-                            title="Preview Video Player"
+                            className={`p-1 rounded shrink-0 cursor-pointer ${
+                              isImage
+                                ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20'
+                                : 'bg-blue-500/10 text-blue-400 hover:bg-blue-500/20'
+                            }`}
+                            title={isImage ? 'Preview Picture' : 'Preview Video Player'}
                           >
-                            <Play className="w-3 h-3 fill-current" />
+                            {isImage ? (
+                              <ImageIcon className="w-3 h-3" />
+                            ) : (
+                              <Play className="w-3 h-3 fill-current" />
+                            )}
                           </button>
+                          <span className="text-[9px] font-mono font-bold uppercase text-slate-500 shrink-0">
+                            {isImage ? 'PIC' : 'VID'}
+                          </span>
                           <span
                             className="truncate flex-1 text-[11px] font-mono text-slate-300 cursor-pointer hover:text-blue-400"
                             onClick={() => setEditingTarget(item)}
@@ -638,14 +740,14 @@ export const ContentTab: React.FC<ContentTabProps> = ({
                             {item.videoName || item.videoPath}
                           </span>
                           <label
-                            title="Choose video file from device"
+                            title="Choose video, picture, or .txt file from device"
                             className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 rounded text-[10px] font-semibold cursor-pointer flex items-center gap-1 shrink-0"
                           >
                             <FolderOpen className="w-3 h-3" />
                             <span>Choose</span>
                             <input
                               type="file"
-                              accept="video/*,.mp4,.mov,.mkv,.avi,.webm"
+                              accept="video/*,image/*,.mp4,.mov,.mkv,.avi,.webm,.jpg,.jpeg,.png,.webp,.gif,.bmp,.txt"
                               onChange={(e) => handleChooseRowVideo(item.id, e)}
                               className="hidden"
                             />
@@ -790,35 +892,67 @@ export const ContentTab: React.FC<ContentTabProps> = ({
 
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
-                Assigned Video Path / Name
+                Assigned Video / Picture Path
               </label>
               <div className="flex items-center gap-2">
                 <input
                   type="text"
                   value={editingTarget.videoName || editingTarget.videoPath}
-                  onChange={(e) =>
+                  onChange={(e) => {
+                    const val = e.target.value;
                     setEditingTarget({
                       ...editingTarget,
-                      videoPath: e.target.value,
-                      videoName: e.target.value,
-                    })
-                  }
+                      videoPath: val,
+                      videoName: val,
+                      mediaType: detectIsImage(val, val) ? 'image' : 'video',
+                    });
+                  }}
                   className="flex-1 bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs font-mono text-slate-100"
                 />
                 <label className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg cursor-pointer flex items-center gap-1.5 shrink-0">
                   <FolderOpen className="w-3.5 h-3.5" />
-                  <span>Choose Video</span>
+                  <span>Choose Media</span>
                   <input
                     type="file"
-                    accept="video/*,.mp4,.mov,.mkv,.avi,.webm"
+                    accept="video/*,image/*,.mp4,.mov,.mkv,.avi,.webm,.jpg,.jpeg,.png,.webp,.gif,.bmp,.txt"
                     onChange={(e) => {
                       const file = e.target.files?.[0];
                       if (!file) return;
+                      if (file.name.toLowerCase().endsWith('.txt')) {
+                        const reader = new FileReader();
+                        reader.onload = (ev) => {
+                          const firstLine = ((ev.target?.result as string) || '')
+                            .split(/\r?\n/)
+                            .map((l) => l.trim())
+                            .filter(Boolean)[0];
+                          if (firstLine) {
+                            const fileName = firstLine.split(/[/\\]/).pop() || firstLine;
+                            setEditingTarget((prev) =>
+                              prev
+                                ? {
+                                    ...prev,
+                                    videoPath: firstLine,
+                                    videoName: fileName,
+                                    mediaType: detectIsImage(firstLine, fileName) ? 'image' : 'video',
+                                  }
+                                : null
+                            );
+                          }
+                        };
+                        reader.readAsText(file);
+                        e.target.value = '';
+                        return;
+                      }
                       const objectUrl = URL.createObjectURL(file);
+                      const mediaType: 'image' | 'video' =
+                        file.type.startsWith('image/') || detectIsImage(file.name, file.name)
+                          ? 'image'
+                          : 'video';
                       setEditingTarget({
                         ...editingTarget,
                         videoPath: objectUrl,
                         videoName: file.name,
+                        mediaType,
                       });
                       e.target.value = '';
                     }}

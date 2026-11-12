@@ -6,6 +6,7 @@ export interface TargetItem {
   type: TargetType;
   videoPath: string;
   videoName?: string;
+  mediaType?: 'video' | 'image';
   caption: string;
   date: string; // YYYY-MM-DD
   time: string; // HH:MM

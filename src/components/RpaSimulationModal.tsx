@@ -77,8 +77,8 @@ export const RpaSimulationModal: React.FC<RpaSimulationModalProps> = ({
       },
       {
         id: 'upload',
-        title: 'Uploading Video Asset Bytes',
-        desc: 'Locating input[type="file"] and sending assigned media file',
+        title: `Uploading ${target?.mediaType === 'image' ? 'Picture' : 'Video / Media'} Asset Bytes`,
+        desc: 'Locating input[type="file"] and sending assigned video/picture file',
       },
       {
         id: 'typing',
@@ -320,7 +320,7 @@ export const RpaSimulationModal: React.FC<RpaSimulationModalProps> = ({
                   <div className="flex items-center justify-between text-xs font-semibold text-slate-200 mb-1">
                     <span className="flex items-center gap-1.5">
                       <Video className="w-3.5 h-3.5 text-blue-400" />
-                      Assigned Video Asset:
+                      Assigned Media Asset ({target.mediaType === 'image' ? 'Picture' : 'Video'}):
                     </span>
                     <span className="text-[10px] font-mono text-emerald-400">
                       Ready

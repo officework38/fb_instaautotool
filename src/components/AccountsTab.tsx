@@ -31,6 +31,7 @@ import {
   HumanBehaviorConfig,
 } from '../types';
 import { SAMPLE_VIDEOS } from '../data/initialData';
+import { detectIsImage } from './MediaPreviewModal';
 
 interface AccountsTabProps {
   accounts: AccountItem[];
@@ -94,6 +95,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
   const [newPageToken, setNewPageToken] = useState('');
   const [newPageVideoPath, setNewPageVideoPath] = useState(SAMPLE_VIDEOS[0].path);
   const [newPageVideoName, setNewPageVideoName] = useState(SAMPLE_VIDEOS[0].name);
+  const [newPageMediaType, setNewPageMediaType] = useState<'video' | 'image'>('video');
 
   // Persistent Sessions Vault state ("Save Once, Never Log In Again")
   const [savedSessions, setSavedSessions] = useState<SavedSession[]>([]);
@@ -586,6 +588,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
       pageUrl: `https://facebook.com/${cleanId}`,
       videoPath: newPageVideoPath || SAMPLE_VIDEOS[0].path,
       videoName: newPageVideoName || newPageVideoPath || SAMPLE_VIDEOS[0].name,
+      mediaType: newPageMediaType,
       caption: `Check out our latest update! Follow ${newPageName} for daily deals & reels. #viral #reels`,
       date: todayStr,
       time: '12:00',
@@ -601,6 +604,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
     setNewPageToken('');
     setNewPageVideoPath(SAMPLE_VIDEOS[0].path);
     setNewPageVideoName(SAMPLE_VIDEOS[0].name);
+    setNewPageMediaType('video');
     setTimeout(() => onGoToContent(), 400);
   };
 
@@ -1773,30 +1777,53 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
 
             <div>
               <label className="block text-xs font-medium text-slate-300 mb-1">
-                Assigned Video Path / File
+                Assigned Media (Video / Picture / .txt)
               </label>
               <div className="flex items-center gap-2">
                 <input
                   type="text"
                   value={newPageVideoName || newPageVideoPath}
                   onChange={(e) => {
-                    setNewPageVideoPath(e.target.value);
-                    setNewPageVideoName(e.target.value);
+                    const val = e.target.value;
+                    setNewPageVideoPath(val);
+                    setNewPageVideoName(val);
+                    setNewPageMediaType(detectIsImage(val, val) ? 'image' : 'video');
                   }}
-                  placeholder="Choose video or enter path..."
+                  placeholder="Choose video, picture, or .txt path..."
                   className="flex-1 bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs font-mono text-slate-100 placeholder:text-slate-600"
                 />
                 <label className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg cursor-pointer flex items-center gap-1.5 shrink-0">
                   <FolderOpen className="w-3.5 h-3.5" />
-                  <span>Choose Video</span>
+                  <span>Choose Media</span>
                   <input
                     type="file"
-                    accept="video/*,.mp4,.mov,.mkv,.avi,.webm"
+                    accept="video/*,image/*,.mp4,.mov,.mkv,.avi,.webm,.jpg,.jpeg,.png,.webp,.gif,.bmp,.txt"
                     onChange={(e) => {
                       const file = e.target.files?.[0];
                       if (!file) return;
+                      if (file.name.toLowerCase().endsWith('.txt')) {
+                        const reader = new FileReader();
+                        reader.onload = (ev) => {
+                          const firstLine = ((ev.target?.result as string) || '')
+                            .split(/\r?\n/)
+                            .map((l) => l.trim())
+                            .filter(Boolean)[0];
+                          if (firstLine) {
+                            const fileName = firstLine.split(/[/\\]/).pop() || firstLine;
+                            setNewPageVideoPath(firstLine);
+                            setNewPageVideoName(fileName);
+                            setNewPageMediaType(detectIsImage(firstLine, fileName) ? 'image' : 'video');
+                          }
+                        };
+                        reader.readAsText(file);
+                        e.target.value = '';
+                        return;
+                      }
+                      const isImg =
+                        file.type.startsWith('image/') || detectIsImage(file.name, file.name);
                       setNewPageVideoPath(URL.createObjectURL(file));
                       setNewPageVideoName(file.name);
+                      setNewPageMediaType(isImg ? 'image' : 'video');
                       e.target.value = '';
                     }}
                     className="hidden"

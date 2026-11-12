@@ -11,8 +11,10 @@ import {
   Lock,
   Bot,
   FolderOpen,
+  Image as ImageIcon,
 } from 'lucide-react';
 import { HumanBehaviorConfig, SavedSession, TargetItem } from '../types';
+import { detectIsImage } from './MediaPreviewModal';
 
 interface SchedulerTabProps {
   targets: TargetItem[];
@@ -101,7 +103,41 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (file.name.toLowerCase().endsWith('.txt')) {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const firstLine = ((ev.target?.result as string) || '')
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter(Boolean)[0];
+        if (!firstLine) return;
+        const fileName = firstLine.split(/[/\\]/).pop() || firstLine;
+        const mediaType: 'image' | 'video' = detectIsImage(firstLine, fileName)
+          ? 'image'
+          : 'video';
+        setTargets((prev) =>
+          prev.map((t) =>
+            t.id === targetId
+              ? { ...t, videoPath: firstLine, videoName: fileName, mediaType }
+              : t
+          )
+        );
+        onLog(
+          'INFO',
+          `Updated ${mediaType} for target [${targetId}] from .txt to [${fileName}].`
+        );
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+      return;
+    }
+
     const objectUrl = URL.createObjectURL(file);
+    const mediaType: 'image' | 'video' =
+      file.type.startsWith('image/') || detectIsImage(file.name, file.name)
+        ? 'image'
+        : 'video';
     setTargets((prev) =>
       prev.map((t) =>
         t.id === targetId
@@ -109,11 +145,12 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
               ...t,
               videoPath: objectUrl,
               videoName: file.name,
+              mediaType,
             }
           : t
       )
     );
-    onLog('INFO', `Updated video for target [${targetId}] to [${file.name}].`);
+    onLog('INFO', `Updated ${mediaType} for target [${targetId}] to [${file.name}].`);
     e.target.value = '';
   };
 
@@ -263,7 +300,7 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
                 <tr className="bg-slate-950/80 text-slate-400 border-b border-slate-800 font-semibold uppercase text-[11px] tracking-wider">
                   <th className="py-2.5 px-3">Profile / Page Name</th>
                   <th className="py-2.5 px-3 text-center">Type</th>
-                  <th className="py-2.5 px-3">Assigned Video Path</th>
+                  <th className="py-2.5 px-3">Assigned Media (Video / Pic)</th>
                   <th className="py-2.5 px-3">Caption</th>
                   <th className="py-2.5 px-3 text-center">Schedule Date</th>
                   <th className="py-2.5 px-3 text-center">Time</th>
@@ -274,6 +311,9 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
               <tbody className="divide-y divide-slate-800 bg-slate-950/30">
                 {targets.map((item) => {
                   const isSelected = selectedTargetId === item.id;
+                  const isImage =
+                    item.mediaType === 'image' ||
+                    detectIsImage(item.videoPath, item.videoName);
                   return (
                     <tr
                       key={item.id}
@@ -294,21 +334,24 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
                         </span>
                       </td>
 
-                      <td className="py-2.5 px-3 max-w-[260px]">
+                      <td className="py-2.5 px-3 max-w-[270px]">
                         <div className="flex items-center gap-1.5">
+                          <span className="text-[9px] font-mono font-bold uppercase text-slate-500 shrink-0">
+                            {isImage ? 'PIC' : 'VID'}
+                          </span>
                           <span className="truncate flex-1 font-mono text-[11px] text-slate-300 block">
                             {item.videoName || item.videoPath}
                           </span>
                           <label
                             onClick={(e) => e.stopPropagation()}
-                            title="Choose video file from device"
+                            title="Choose video, picture, or .txt file from device"
                             className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 rounded text-[10px] font-semibold cursor-pointer flex items-center gap-1 shrink-0"
                           >
                             <FolderOpen className="w-3 h-3" />
                             <span>Choose</span>
                             <input
                               type="file"
-                              accept="video/*,.mp4,.mov,.mkv,.avi,.webm"
+                              accept="video/*,image/*,.mp4,.mov,.mkv,.avi,.webm,.jpg,.jpeg,.png,.webp,.gif,.bmp,.txt"
                               onChange={(e) => handleChooseTargetVideo(item.id, e)}
                               className="hidden"
                             />
@@ -390,7 +433,12 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
                   }
                   className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-medium rounded flex items-center gap-1.5 cursor-pointer"
                 >
-                  <Video className="w-3 h-3 text-blue-400" />
+                  {selectedTarget.mediaType === 'image' ||
+                  detectIsImage(selectedTarget.videoPath, selectedTarget.videoName) ? (
+                    <ImageIcon className="w-3 h-3 text-emerald-400" />
+                  ) : (
+                    <Video className="w-3 h-3 text-blue-400" />
+                  )}
                   <span>Preview Media</span>
                 </button>
 
@@ -407,17 +455,19 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-mono">
               <div>
-                <span className="text-slate-500 block text-[11px] mb-1">Assigned Video Path:</span>
+                <span className="text-slate-500 block text-[11px] mb-1">
+                  Assigned Media (Video / Picture):
+                </span>
                 <div className="flex items-center gap-2">
                   <span className="text-slate-200 break-all flex-1">
                     {selectedTarget.videoName || selectedTarget.videoPath}
                   </span>
                   <label className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-sans font-semibold rounded flex items-center gap-1 cursor-pointer shrink-0">
                     <FolderOpen className="w-3 h-3" />
-                    <span>Choose Video</span>
+                    <span>Choose Media</span>
                     <input
                       type="file"
-                      accept="video/*,.mp4,.mov,.mkv,.avi,.webm"
+                      accept="video/*,image/*,.mp4,.mov,.mkv,.avi,.webm,.jpg,.jpeg,.png,.webp,.gif,.bmp,.txt"
                       onChange={(e) => handleChooseTargetVideo(selectedTarget.id, e)}
                       className="hidden"
                     />

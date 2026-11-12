@@ -1,11 +1,17 @@
 import React from 'react';
-import { X, Video, Play, Film, CheckCircle2 } from 'lucide-react';
+import { X, Video, Image as ImageIcon, CheckCircle2 } from 'lucide-react';
 import { SAMPLE_VIDEOS } from '../data/initialData';
 
 interface MediaPreviewModalProps {
   mediaPath: string | null;
   mediaName: string | null;
   onClose: () => void;
+}
+
+export function detectIsImage(pathOrUrl: string, name?: string | null): boolean {
+  const combined = `${name || ''} ${pathOrUrl || ''}`.toLowerCase();
+  if (combined.startsWith('data:image/')) return true;
+  return /\.(jpg|jpeg|png|webp|gif|bmp|svg)(\?|#|\s|$)/i.test(combined);
 }
 
 export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
@@ -15,12 +21,15 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
 }) => {
   if (!mediaPath) return null;
 
-  // Play chosen local video blob URL or sample streaming URL
+  const isImage = detectIsImage(mediaPath, mediaName);
+
   const sample = SAMPLE_VIDEOS.find(
     (v) => v.path === mediaPath || v.name === mediaName
   );
   const streamUrl =
-    mediaPath.startsWith('blob:') || mediaPath.startsWith('http')
+    mediaPath.startsWith('blob:') ||
+    mediaPath.startsWith('http') ||
+    mediaPath.startsWith('data:')
       ? mediaPath
       : sample
       ? sample.url
@@ -32,9 +41,14 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
         {/* Header */}
         <div className="px-5 py-3.5 bg-slate-950 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <Video className="w-4 h-4 text-blue-400" />
-            <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-              Media Reel Inspector: {mediaName || 'Video Asset'}
+            {isImage ? (
+              <ImageIcon className="w-4 h-4 text-emerald-400" />
+            ) : (
+              <Video className="w-4 h-4 text-blue-400" />
+            )}
+            <h3 className="text-xs font-bold text-white uppercase tracking-wider truncate max-w-[360px]">
+              {isImage ? 'Picture Inspector' : 'Video Reel Inspector'}:{' '}
+              {mediaName || (isImage ? 'Picture Asset' : 'Video Asset')}
             </h3>
           </div>
           <button
@@ -46,36 +60,48 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
           </button>
         </div>
 
-        {/* Video Player */}
+        {/* Media Viewer (Picture or Video) */}
         <div className="bg-black aspect-video flex items-center justify-center relative overflow-hidden">
-          <video
-            src={streamUrl}
-            controls
-            autoPlay
-            loop
-            className="w-full h-full object-contain"
-          />
+          {isImage ? (
+            <img
+              src={streamUrl}
+              alt={mediaName || 'Selected Picture'}
+              className="w-full h-full object-contain"
+            />
+          ) : (
+            <video
+              src={streamUrl}
+              controls
+              autoPlay
+              loop
+              className="w-full h-full object-contain"
+            />
+          )}
         </div>
 
-        {/* Video Details & Meta */}
+        {/* Media Details */}
         <div className="p-5 space-y-3">
           <div className="space-y-1">
             <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">
-              Local File Path:
+              Selected Media Path / File:
             </span>
             <div className="text-xs font-mono text-emerald-300 bg-slate-950 p-2.5 rounded-lg border border-slate-800 break-all select-all">
-              {mediaPath}
+              {mediaName || mediaPath}
             </div>
           </div>
 
           <div className="grid grid-cols-3 gap-3 text-xs pt-1">
             <div className="p-2 rounded bg-slate-950 border border-slate-800">
-              <span className="text-[10px] text-slate-500 block">Aspect Ratio</span>
-              <span className="font-semibold text-slate-200">9:16 Vertical Reel</span>
+              <span className="text-[10px] text-slate-500 block">Media Type</span>
+              <span className="font-semibold text-slate-200">
+                {isImage ? 'Picture / Photo' : 'Video / Reel'}
+              </span>
             </div>
             <div className="p-2 rounded bg-slate-950 border border-slate-800">
-              <span className="text-[10px] text-slate-500 block">Encoding</span>
-              <span className="font-semibold text-slate-200">H.264 / AAC</span>
+              <span className="text-[10px] text-slate-500 block">Format</span>
+              <span className="font-semibold text-slate-200">
+                {isImage ? 'JPG / PNG / WEBP' : 'H.264 / MP4'}
+              </span>
             </div>
             <div className="p-2 rounded bg-slate-950 border border-slate-800">
               <span className="text-[10px] text-slate-500 block">Verification</span>

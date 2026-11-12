@@ -1207,7 +1207,7 @@ class MultiAccountProApp:
         btn_add_manual_target = tk.Button(f_cont_top, text="➕ Add Real Page", bg="#007ACC", fg="white", font=("Arial", 8, "bold"), command=self.dialog_add_real_page_direct)
         btn_add_manual_target.pack(side=tk.RIGHT, padx=5)
 
-        btn_import_vids = tk.Button(f_cont_top, text="📂 Import Video .txt", bg="#ffc107", fg="black", font=("Arial", 8, "bold"), command=self.import_video_paths_file)
+        btn_import_vids = tk.Button(f_cont_top, text="📂 Choose Media (Video / Pic / .txt)", bg="#ffc107", fg="black", font=("Arial", 8, "bold"), command=self.import_video_paths_file)
         btn_import_vids.pack(side=tk.RIGHT, padx=5)
 
         btn_clear_table = tk.Button(f_cont_top, text="🗑️ Clear Table", bg="#dc3545", fg="white", font=("Arial", 8, "bold"), command=self.clear_mapping_table)
@@ -1218,7 +1218,7 @@ class MultiAccountProApp:
 
         self.tree.heading("profile", text="Profile / Real Page Name")
         self.tree.heading("type", text="Type")
-        self.tree.heading("video", text="Video Path")
+        self.tree.heading("video", text="Media Path (Video / Picture)")
         self.tree.heading("caption", text="Caption")
         self.tree.heading("date", text="Schedule Date")
         self.tree.heading("time", text="Time")
@@ -1627,11 +1627,12 @@ class MultiAccountProApp:
         self.human_warmup_scroll(driver)
 
         abs_video_path = os.path.abspath(video_path) if video_path and os.path.exists(video_path) else None
+        is_image_asset = bool(video_path and video_path.lower().endswith((".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")))
         if not abs_video_path:
-            self.log_message(f"Video path '{video_path}' not found locally; proceeding with composer workflow.")
+            self.log_message(f"Media path '{video_path}' not found locally; proceeding with composer workflow.")
 
-        composer_url = "https://business.facebook.com/latest/reels_composer"
-        self.log_message(f"Navigating to Meta Reels Composer: {composer_url}...")
+        composer_url = "https://business.facebook.com/latest/composer" if is_image_asset else "https://business.facebook.com/latest/reels_composer"
+        self.log_message(f"Navigating to Meta Composer ({'Picture' if is_image_asset else 'Video'}): {composer_url}...")
         driver.get(composer_url)
         time.sleep(random.uniform(4.2, 6.2))
 
@@ -1645,8 +1646,11 @@ class MultiAccountProApp:
         try:
             file_inputs = driver.find_elements(By.CSS_SELECTOR, 'input[type="file"]')
             for inp in file_inputs:
-                accept = inp.get_attribute("accept") or ""
-                if "video" in accept or "mp4" in accept or not accept:
+                accept = (inp.get_attribute("accept") or "").lower()
+                if is_image_asset and ("image" in accept or "jpg" in accept or "png" in accept or not accept):
+                    file_input = inp
+                    break
+                if (not is_image_asset) and ("video" in accept or "mp4" in accept or not accept):
                     file_input = inp
                     break
             if not file_input and len(file_inputs) > 0:
@@ -1656,9 +1660,9 @@ class MultiAccountProApp:
 
         if file_input and abs_video_path and os.path.exists(abs_video_path):
             try:
-                self.log_message(f"Uploading video asset: {abs_video_path}...")
+                self.log_message(f"Uploading {'picture' if is_image_asset else 'video'} asset: {abs_video_path}...")
                 file_input.send_keys(abs_video_path)
-                time.sleep(random.uniform(8.0, 12.0))
+                time.sleep(random.uniform(6.0, 10.0) if is_image_asset else random.uniform(8.0, 12.0))
             except Exception as ex_up:
                 self.log_message(f"Upload notice: {str(ex_up)}")
 
@@ -1893,24 +1897,38 @@ class MultiAccountProApp:
                 messagebox.showerror("Error", f"Could not read file: {str(e)}")
 
     def import_video_paths_file(self):
-        file_path = filedialog.askopenfilename(title="Select Video Paths .txt File", filetypes=[("Text Files", "*.txt"), ("Video Files", "*.mp4 *.mov"), ("All Files", "*.*")])
-        if not file_path:
+        media_exts = (".mp4", ".mov", ".avi", ".mkv", ".webm", ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp")
+        file_paths = filedialog.askopenfilenames(
+            title="Choose Video(s), Picture(s), or Media Paths .txt",
+            filetypes=[
+                ("Media & .txt Files", "*.mp4 *.mov *.avi *.mkv *.webm *.jpg *.jpeg *.png *.webp *.gif *.bmp *.txt"),
+                ("Video Files", "*.mp4 *.mov *.avi *.mkv *.webm"),
+                ("Picture Files", "*.jpg *.jpeg *.png *.webp *.gif *.bmp"),
+                ("Text Path Lists", "*.txt"),
+                ("All Files", "*.*")
+            ]
+        )
+        if not file_paths:
             return
         try:
-            if file_path.lower().endswith((".mp4", ".mov", ".avi", ".mkv")):
-                for item in self.tree.get_children():
-                    v = self.tree.item(item, "values")
-                    self.tree.item(item, values=(v[0], v[1], file_path, v[3], v[4], v[5], v[6], v[7]))
-                self.log_message(f"Assigned single video path: {file_path}")
-            else:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    lines = [line.strip() for line in f if line.strip()]
-                rows = self.tree.get_children()
-                for index, r_id in enumerate(rows):
-                    v = self.tree.item(r_id, "values")
-                    vid_path = lines[index % len(lines)]
-                    self.tree.item(r_id, values=(v[0], v[1], vid_path, v[3], v[4], v[5], v[6], v[7]))
-                self.log_message(f"Assigned {len(lines)} video paths to targets.")
+            resolved_paths = []
+            for fp in file_paths:
+                if fp.lower().endswith(".txt"):
+                    with open(fp, "r", encoding="utf-8") as f:
+                        resolved_paths.extend([line.strip() for line in f if line.strip()])
+                elif fp.lower().endswith(media_exts) or fp:
+                    resolved_paths.append(fp)
+
+            if not resolved_paths:
+                messagebox.showwarning("Notice", "No video or picture paths found in the selected file(s).")
+                return
+
+            rows = self.tree.get_children()
+            for index, r_id in enumerate(rows):
+                v = self.tree.item(r_id, "values")
+                media_path = resolved_paths[index % len(resolved_paths)]
+                self.tree.item(r_id, values=(v[0], v[1], media_path, v[3], v[4], v[5], v[6], v[7]))
+            self.log_message(f"Assigned {len(resolved_paths)} video/picture media path(s) across targets.")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
@@ -1940,13 +1958,33 @@ class MultiAccountProApp:
         if not selected:
             self.import_video_paths_file()
             return
-        file_path = filedialog.askopenfilename(title="Choose Video File", filetypes=[("Video Files", "*.mp4 *.mov *.avi *.mkv"), ("All Files", "*.*")])
+        file_path = filedialog.askopenfilename(
+            title="Choose Video, Picture, or .txt File",
+            filetypes=[
+                ("Media & .txt Files", "*.mp4 *.mov *.avi *.mkv *.webm *.jpg *.jpeg *.png *.webp *.gif *.bmp *.txt"),
+                ("Video Files", "*.mp4 *.mov *.avi *.mkv *.webm"),
+                ("Picture Files", "*.jpg *.jpeg *.png *.webp *.gif *.bmp"),
+                ("Text Path Lists", "*.txt"),
+                ("All Files", "*.*")
+            ]
+        )
         if not file_path:
+            return
+        if file_path.lower().endswith(".txt"):
+            with open(file_path, "r", encoding="utf-8") as f:
+                lines = [line.strip() for line in f if line.strip()]
+            if not lines:
+                return
+            for idx, item in enumerate(selected):
+                v = self.tree.item(item, "values")
+                picked_line = lines[idx % len(lines)]
+                self.tree.item(item, values=(v[0], v[1], picked_line, v[3], v[4], v[5], v[6], v[7]))
+            self.log_message(f"Assigned {len(lines)} path(s) from .txt to selected row(s).")
             return
         for item in selected:
             v = self.tree.item(item, "values")
             self.tree.item(item, values=(v[0], v[1], file_path, v[3], v[4], v[5], v[6], v[7]))
-        self.log_message(f"Chosen video [{file_path}] for selected row(s).")
+        self.log_message(f"Chosen media [{file_path}] for selected row(s).")
 
     def edit_caption_for_row(self):
         selected = self.tree.selection()
@@ -2000,11 +2038,26 @@ class MultiAccountProApp:
         col = self.tree.identify_column(event.x)
         item = self.tree.identify_row(event.y)
         if col == "#7" and item:
-            file_path = filedialog.askopenfilename(title="Choose Video File", filetypes=[("Video Files", "*.mp4 *.mov *.avi *.mkv"), ("All Files", "*.*")])
+            file_path = filedialog.askopenfilename(
+                title="Choose Video, Picture, or .txt File",
+                filetypes=[
+                    ("Media & .txt Files", "*.mp4 *.mov *.avi *.mkv *.webm *.jpg *.jpeg *.png *.webp *.gif *.bmp *.txt"),
+                    ("Video Files", "*.mp4 *.mov *.avi *.mkv *.webm"),
+                    ("Picture Files", "*.jpg *.jpeg *.png *.webp *.gif *.bmp"),
+                    ("Text Path Lists", "*.txt"),
+                    ("All Files", "*.*")
+                ]
+            )
             if file_path:
+                chosen_path = file_path
+                if file_path.lower().endswith(".txt"):
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        lines = [line.strip() for line in f if line.strip()]
+                    if lines:
+                        chosen_path = lines[0]
                 v = self.tree.item(item, "values")
-                self.tree.item(item, values=(v[0], v[1], file_path, v[3], v[4], v[5], v[6], v[7]))
-                self.log_message(f"Chosen video [{file_path}] for [{v[0]}].")
+                self.tree.item(item, values=(v[0], v[1], chosen_path, v[3], v[4], v[5], v[6], v[7]))
+                self.log_message(f"Chosen media [{chosen_path}] for [{v[0]}].")
         elif col == "#8" and item:
             vals = self.tree.item(item, "values")
             self.deleted_rows_stack.append(("tab2", vals))
