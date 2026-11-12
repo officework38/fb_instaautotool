@@ -1425,6 +1425,43 @@ class MultiAccountProApp:
             command=self.login_tab_chrome_profile
         ).pack(fill="x", pady=4)
 
+        # Facebook Mobile App Selector Section
+        f_mob_app = tk.LabelFrame(
+            self.tab_login,
+            text=" Select Facebook Mobile App (Mobile App Direct Connect) ",
+            font=("Arial", 10, "bold"),
+            fg="#6610f2",
+            padx=12,
+            pady=10
+        )
+        f_mob_app.pack(fill="x", padx=20, pady=(4, 12))
+
+        tk.Label(f_mob_app, text="Mobile App:", font=("Arial", 9, "bold")).grid(row=0, column=0, padx=6, pady=4, sticky="w")
+        self.combo_mobile_app = ttk.Combobox(
+            f_mob_app,
+            values=[
+                "Facebook Official App (Android / iOS)",
+                "Facebook Lite App",
+                "Facebook Mobile Browser (m.facebook.com)"
+            ],
+            width=36
+        )
+        self.combo_mobile_app.set("Facebook Official App (Android / iOS)")
+        self.combo_mobile_app.grid(row=0, column=1, padx=6, pady=4)
+
+        tk.Label(f_mob_app, text="Sync PIN (Optional):", font=("Arial", 9, "bold")).grid(row=0, column=2, padx=6, pady=4, sticky="w")
+        self.entry_mobile_app_pin = tk.Entry(f_mob_app, width=16)
+        self.entry_mobile_app_pin.grid(row=0, column=3, padx=6, pady=4)
+
+        tk.Button(
+            f_mob_app,
+            text="Connect Mobile App & Go to Content",
+            bg="#6610f2",
+            fg="white",
+            font=("Arial", 9, "bold"),
+            command=self.login_tab_mobile_app_connect
+        ).grid(row=0, column=4, padx=10, pady=4)
+
     def setup_content_tab(self):
         f_bulk = tk.LabelFrame(self.tab_content, text=" 📝 Global Bulk Caption / Comment Injector ", font=("Arial", 10, "bold"), fg="#28a745")
         f_bulk.pack(fill="x", padx=15, pady=5)
@@ -2001,6 +2038,32 @@ class MultiAccountProApp:
                 self.root.after(0, lambda: messagebox.showerror("Chrome Profile Error", f"Ensure normal Chrome windows using this profile are closed first.\\n{str(e)}"))
 
         threading.Thread(target=profile_worker, daemon=True).start()
+
+    def login_tab_mobile_app_connect(self):
+        app_choice = self.combo_mobile_app.get().strip() or "Facebook Official App"
+        pin_val = self.entry_mobile_app_pin.get().strip()
+        if pin_val:
+            try:
+                url = "http://127.0.0.1:3000/api/fb/mobile-sync/claim"
+                payload = json.dumps({
+                    "pin": pin_val,
+                    "nickname": app_choice,
+                    "source": "mobile_browser" if "Browser" in app_choice else "mobile_app"
+                }).encode("utf-8")
+                req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    data = json.loads(resp.read().decode())
+                    if data.get("success") and data.get("session"):
+                        sess = data["session"]
+                        self.txt_accounts.delete("1.0", tk.END)
+                        self.txt_accounts.insert(tk.END, sess.get("cookies", "") + "\\n")
+                        self.entry_profile_name.delete(0, tk.END)
+                        self.entry_profile_name.insert(0, sess.get("nickname", app_choice))
+                        self.save_current_session_to_vault_gui()
+                        return
+            except Exception as e:
+                self.log_message(f"Mobile app sync note: {str(e)}")
+        self.dialog_claim_mobile_pin()
 
     def inject_saved_cookies(self, driver):
         """Inject active saved cookies into Chrome session so Facebook loads already signed in"""

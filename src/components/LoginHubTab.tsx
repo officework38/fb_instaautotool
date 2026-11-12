@@ -12,6 +12,7 @@ import {
   Eye,
   EyeOff,
   FolderOpen,
+  Smartphone,
 } from 'lucide-react';
 import { FbApiConfig, SavedSession, TargetItem } from '../types';
 
@@ -60,6 +61,7 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
 
   // OPTION 2: Facebook Login via Cookies
   const [cookieNickname, setCookieNickname] = useState('Cookies_FB_Profile');
+  const [cookieSource, setCookieSource] = useState<'mobile_app' | 'mobile_browser' | 'cookie_vault'>('mobile_app');
   const [cookiesInput, setCookiesInput] = useState(activeSession?.cookies || '');
   const [rememberCookies, setRememberCookies] = useState(true);
   const [isCookiesBusy, setIsCookiesBusy] = useState(false);
@@ -72,6 +74,14 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
   );
   const [chromeDebugPort, setChromeDebugPort] = useState('9222');
   const [isChromeBusy, setIsChromeBusy] = useState(false);
+
+  // Facebook Mobile App Selector (Quick Mobile App Connect)
+  const [selectedMobileApp, setSelectedMobileApp] = useState<
+    'fb_official' | 'fb_lite' | 'fb_mobile_web'
+  >('fb_official');
+  const [mobileAppNickname, setMobileAppNickname] = useState('My_Facebook_Mobile_App');
+  const [mobileAppPin, setMobileAppPin] = useState('');
+  const [isMobileAppBusy, setIsMobileAppBusy] = useState(false);
 
   useEffect(() => {
     fetch('/api/fb/saved-sessions')
@@ -195,7 +205,7 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
           body: JSON.stringify({
             nickname,
             c_user: cUserId,
-            source: 'cookie_vault',
+            source: cookieSource,
             cookies: firstLine,
           }),
         });
@@ -213,7 +223,7 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
           id: `session-cookie-${Date.now()}`,
           nickname,
           c_user: cUserId,
-          source: 'cookie_vault',
+          source: cookieSource,
           cookies: firstLine,
           savedAt: new Date().toISOString(),
           lastUsed: new Date().toISOString(),
@@ -324,6 +334,107 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
     onLog('SUCCESS', `Restored saved session [${session.nickname}] — Moving to Content & Media...`);
     onNotify(`Restored ${session.nickname}! Moving to Content...`);
     setTimeout(() => onGoToContent(), 400);
+  };
+
+  // Facebook Mobile App Selector: Get PIN & Connect
+  const handleGetMobileAppPin = async () => {
+    setStatusMessage(null);
+    setIsMobileAppBusy(true);
+    try {
+      const appLabel =
+        selectedMobileApp === 'fb_official'
+          ? 'Facebook Official App'
+          : selectedMobileApp === 'fb_lite'
+          ? 'Facebook Lite App'
+          : 'Mobile Browser (m.facebook.com)';
+      const res = await fetch('/api/fb/mobile-sync/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nickname: mobileAppNickname.trim() || appLabel,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success || !data.pin) {
+        throw new Error(data.error || 'Could not generate Mobile App PIN.');
+      }
+      setMobileAppPin(data.pin);
+      setStatusMessage({
+        type: 'info',
+        text: `${appLabel} selected — Sync PIN ${data.pin} ready. Click "Connect Mobile App & Go to Content".`,
+      });
+      onLog('INFO', `Generated PIN [${data.pin}] for ${appLabel}.`);
+    } catch (err: any) {
+      setStatusMessage({ type: 'error', text: err.message });
+    } finally {
+      setIsMobileAppBusy(false);
+    }
+  };
+
+  const handleConnectMobileApp = async () => {
+    setStatusMessage(null);
+    setIsMobileAppBusy(true);
+    const appLabel =
+      selectedMobileApp === 'fb_official'
+        ? 'Facebook Official App'
+        : selectedMobileApp === 'fb_lite'
+        ? 'Facebook Lite App'
+        : 'Mobile Browser (m.facebook.com)';
+    const sourceVal: SavedSession['source'] =
+      selectedMobileApp === 'fb_mobile_web' ? 'mobile_browser' : 'mobile_app';
+
+    try {
+      let pinToClaim = mobileAppPin.trim();
+      if (!pinToClaim) {
+        const createRes = await fetch('/api/fb/mobile-sync/create', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            nickname: mobileAppNickname.trim() || appLabel,
+          }),
+        });
+        const createData = await createRes.json();
+        if (createRes.ok && createData.pin) {
+          pinToClaim = createData.pin;
+          setMobileAppPin(pinToClaim);
+        }
+      }
+
+      const res = await fetch('/api/fb/mobile-sync/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          pin: pinToClaim,
+          nickname: mobileAppNickname.trim() || appLabel,
+          source: sourceVal,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success || !data.session) {
+        throw new Error(data.error || 'Could not connect Facebook Mobile App.');
+      }
+
+      onSessionChanged(data.session);
+      setSavedSessions((prev) => {
+        const filtered = prev.filter((s) => s.id !== data.session.id);
+        return [data.session, ...filtered];
+      });
+      onLog(
+        'SUCCESS',
+        `Connected [${appLabel}] (${data.session.nickname}) & saved permanently. Moving to Content...`
+      );
+      onNotify(`${appLabel} Connected! Moving to Content...`);
+      setStatusMessage({
+        type: 'success',
+        text: `${appLabel} connected & saved permanently. Moving to Content...`,
+      });
+      setTimeout(() => onGoToContent(), 550);
+    } catch (err: any) {
+      setStatusMessage({ type: 'error', text: err.message });
+      onLog('ERROR', `Mobile App connection error: ${err.message}`);
+    } finally {
+      setIsMobileAppBusy(false);
+    }
   };
 
   return (
@@ -504,17 +615,37 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
             </p>
 
             <div className="space-y-3">
-              <div>
-                <label className="block text-[11px] font-medium text-slate-300 mb-1">
-                  Account Label / Nickname
-                </label>
-                <input
-                  type="text"
-                  value={cookieNickname}
-                  onChange={(e) => setCookieNickname(e.target.value)}
-                  placeholder="My_Facebook_Cookies"
-                  className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
-                />
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-300 mb-1">
+                    Account Label
+                  </label>
+                  <input
+                    type="text"
+                    value={cookieNickname}
+                    onChange={(e) => setCookieNickname(e.target.value)}
+                    placeholder="My_FB_Cookies"
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-xs text-slate-100 placeholder:text-slate-600 focus:outline-none focus:border-emerald-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-300 mb-1">
+                    Cookie Source
+                  </label>
+                  <select
+                    value={cookieSource}
+                    onChange={(e) =>
+                      setCookieSource(
+                        e.target.value as 'mobile_app' | 'mobile_browser' | 'cookie_vault'
+                      )
+                    }
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="mobile_app">Facebook Mobile App</option>
+                    <option value="mobile_browser">Mobile Browser</option>
+                    <option value="cookie_vault">Desktop Chrome</option>
+                  </select>
+                </div>
               </div>
 
               <div>
@@ -694,6 +825,94 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
           </button>
         </section>
       </div>
+
+      {/* Facebook Mobile App Selector Section */}
+      <section className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-bold text-white flex items-center gap-2">
+              <Smartphone className="w-4 h-4 text-blue-400 shrink-0" />
+              <span>Select Facebook Mobile App (Mobile App Direct Connect)</span>
+            </h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Apne mobile par logged-in Facebook App select karein aur 1-click ya 6-digit Sync PIN ke zariye connect karein.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+          <div>
+            <label className="block text-[11px] font-medium text-slate-300 mb-1">
+              Facebook Mobile App
+            </label>
+            <select
+              value={selectedMobileApp}
+              onChange={(e) =>
+                setSelectedMobileApp(
+                  e.target.value as 'fb_official' | 'fb_lite' | 'fb_mobile_web'
+                )
+              }
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-blue-500"
+            >
+              <option value="fb_official">Facebook Official App (Android / iOS)</option>
+              <option value="fb_lite">Facebook Lite App</option>
+              <option value="fb_mobile_web">Facebook Mobile Browser (m.facebook.com)</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-medium text-slate-300 mb-1">
+              Mobile Account Label
+            </label>
+            <input
+              type="text"
+              value={mobileAppNickname}
+              onChange={(e) => setMobileAppNickname(e.target.value)}
+              placeholder="My_Facebook_Mobile_App"
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-medium text-slate-300 mb-1">
+              Sync PIN (Auto or Manual)
+            </label>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="text"
+                value={mobileAppPin}
+                onChange={(e) => setMobileAppPin(e.target.value)}
+                placeholder="6-digit PIN"
+                className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono tabular-nums text-white tracking-widest focus:outline-none focus:border-blue-500"
+              />
+              <button
+                type="button"
+                onClick={handleGetMobileAppPin}
+                disabled={isMobileAppBusy}
+                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-blue-300 border border-slate-700 text-xs font-semibold rounded-lg cursor-pointer whitespace-nowrap shrink-0"
+              >
+                Get PIN
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <button
+              type="button"
+              onClick={handleConnectMobileApp}
+              disabled={isMobileAppBusy}
+              className="w-full py-2 px-4 bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap"
+            >
+              {isMobileAppBusy ? (
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Smartphone className="w-3.5 h-3.5" />
+              )}
+              <span>Connect Mobile App &amp; Go to Content</span>
+            </button>
+          </div>
+        </div>
+      </section>
     </div>
   );
 };
