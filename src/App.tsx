@@ -442,8 +442,9 @@ export default function App() {
           lastVerified: 'Just now',
         }))
       );
-      handleLog('SUCCESS', `Verified ${accounts.length} accounts. Active queue synchronized.`);
-      showToast(`Verified ${accounts.length} accounts successfully!`);
+      handleLog('SUCCESS', `Verified ${accounts.length} accounts. Moving to Content & Media section...`);
+      showToast(`Verified ${accounts.length} accounts! Moving to Content section...`);
+      setActiveTab('content');
     }, 800);
   };
 
@@ -478,6 +479,7 @@ export default function App() {
             onUpdateHumanConfig={handleUpdateHumanConfig}
             onAutoFetchPages={handleAutoFetchPages}
             onVerifyAllAccounts={handleVerifyAllAccounts}
+            onGoToContent={() => setActiveTab('content')}
             onAddTargetDirect={(newTarget) => {
               setTargets((prev) => [...prev, newTarget]);
               showToast(`Added target [${newTarget.profileName}]!`);

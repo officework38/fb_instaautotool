@@ -812,9 +812,80 @@ FB & INSTA PRO AUTO-SCHEDULER v40.2 - ANDROID MOBILE (.APK) INSTALLATION
   // ================= VITE DEV MIDDLEWARES =================
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+        watch: null,
+      },
       appType: 'spa',
     });
+
+    // HMR is disabled in this environment; serve safe client helpers without opening a WebSocket
+    app.get('/@vite/client', (_req, res) => {
+      res.type('application/javascript').send(`
+const sheetsMap = new Map();
+const linkSheetsMap = new Map();
+let lastInsertedStyle;
+
+export function updateStyle(id, content) {
+  if (linkSheetsMap.has(id)) return;
+  let style = sheetsMap.get(id);
+  if (!style) {
+    style = document.createElement('style');
+    style.setAttribute('type', 'text/css');
+    style.setAttribute('data-vite-dev-id', id);
+    style.textContent = content;
+    if (!lastInsertedStyle) {
+      document.head.appendChild(style);
+      setTimeout(() => { lastInsertedStyle = undefined; }, 0);
+    } else {
+      lastInsertedStyle.insertAdjacentElement('afterend', style);
+    }
+    lastInsertedStyle = style;
+  } else if (style.textContent !== content) {
+    style.textContent = content;
+  }
+  sheetsMap.set(id, style);
+}
+
+export function removeStyle(id) {
+  if (linkSheetsMap.has(id)) {
+    document.querySelectorAll('link[rel="stylesheet"][data-vite-dev-id="' + CSS.escape(id) + '"]').forEach((el) => el.remove());
+    linkSheetsMap.delete(id);
+  }
+  const style = sheetsMap.get(id);
+  if (style) {
+    document.head.removeChild(style);
+    sheetsMap.delete(id);
+  }
+}
+
+export function createHotContext() {
+  const noop = () => {};
+  return {
+    data: {},
+    accept: noop,
+    acceptExports: noop,
+    dispose: noop,
+    prune: noop,
+    invalidate: noop,
+    on: noop,
+    off: noop,
+    send: noop,
+  };
+}
+
+export function injectQuery(url, queryToInject) {
+  if (url[0] !== '.' && url[0] !== '/') return url;
+  const pathname = url.replace(/[?#].*$/, '');
+  const { search, hash } = new URL(url, 'http://vite.dev');
+  return pathname + '?' + queryToInject + (search ? '&' + search.slice(1) : '') + (hash || '');
+}
+
+export class ErrorOverlay extends HTMLElement {}
+`);
+    });
+
     app.use(vite.middlewares);
   } else {
     app.use(express.static(path.resolve(__dirname, 'dist')));
@@ -1474,8 +1545,9 @@ class MultiAccountProApp:
         })
         with open(self.vault_file, "w", encoding="utf-8") as f:
             json.dump(sessions, f, indent=2)
-        self.log_message(f"Saved session [{nick}] permanently to {self.vault_file}.")
-        messagebox.showinfo("Saved", f"Session '{nick}' saved permanently! Agli baar app khulne par auto-login hoga.")
+        self.log_message(f"Saved session [{nick}] permanently to {self.vault_file}. Moving to Content section.")
+        self.notebook.select(self.tab_content)
+        messagebox.showinfo("Saved", f"Session '{nick}' verified & saved! Moving to Content Setup.")
 
     def dialog_claim_mobile_pin(self):
         pin = simpledialog.askstring("Mobile Sync PIN", "Enter 6-digit Mobile Sync PIN from Web App:", parent=self.root)
@@ -1766,6 +1838,7 @@ class MultiAccountProApp:
                 driver = self.get_chrome_driver(options=options)
                 driver.get("https://business.facebook.com/latest/home")
                 self.log_message(f"Successfully connected to AdsPower / Debugging port {port}!")
+                self.root.after(0, lambda: self.notebook.select(self.tab_content))
                 self.root.after(0, lambda: messagebox.showinfo("Success", f"Connected to browser on port {port} successfully!"))
             except Exception as e:
                 self.log_message(f"Connection error: {str(e)}")
@@ -1790,8 +1863,9 @@ class MultiAccountProApp:
                 curr_d = datetime.now().strftime("%Y-%m-%d")
                 self.root.after(0, lambda n=acc_name, d=curr_d: self.tree.insert("", tk.END, values=(n, "Profile", "Not Assigned", "Default Caption", d, "12:00", "Browse", "Remove")))
                 verified_count += 1
-            self.log_message(f"Verified {verified_count} accounts successfully and added to queue.")
-            self.root.after(0, lambda: messagebox.showinfo("Success", f"Verified {verified_count} accounts successfully!"))
+            self.log_message(f"Verified {verified_count} accounts successfully and moving to Content section.")
+            self.root.after(0, lambda: self.notebook.select(self.tab_content))
+            self.root.after(0, lambda: messagebox.showinfo("Success", f"Verified {verified_count} accounts! Moved to Content section."))
         threading.Thread(target=verify_worker, daemon=True).start()
 
     def import_cookies_file(self):

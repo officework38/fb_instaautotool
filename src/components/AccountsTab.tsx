@@ -42,6 +42,7 @@ interface AccountsTabProps {
   onUpdateHumanConfig: (next: HumanBehaviorConfig) => void;
   onAutoFetchPages: (profileNickname: string) => void;
   onVerifyAllAccounts: () => void;
+  onGoToContent: () => void;
   onAddTargetDirect: (target: TargetItem) => void;
   onNotify: (msg: string) => void;
   onLog: (level: 'INFO' | 'SUCCESS' | 'WARN' | 'ERROR' | 'RPA', msg: string) => void;
@@ -60,6 +61,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
   onUpdateHumanConfig,
   onAutoFetchPages,
   onVerifyAllAccounts,
+  onGoToContent,
   onAddTargetDirect,
   onNotify,
   onLog,
@@ -178,8 +180,9 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
         setVaultBannerMsg(
           `Saved "${data.session.nickname}" permanently! Future runs will auto-restore without re-login.`
         );
-        onNotify(`Saved "${data.session.nickname}" permanently!`);
+        onNotify(`Saved "${data.session.nickname}"! Moving to Content section...`);
         await fetchSavedSessions();
+        setTimeout(() => onGoToContent(), 600);
       } else {
         setVaultBannerMsg(data.error || 'Failed to save session.');
       }
@@ -245,8 +248,9 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
         setVaultBannerMsg(
           `Session "${data.session.nickname}" activated! Dobara login karne ki zaroorat nahi.`
         );
-        onNotify(`Active session: ${data.session.nickname}`);
+        onNotify(`Active session: ${data.session.nickname}. Moving to Content section...`);
         await fetchSavedSessions();
+        setTimeout(() => onGoToContent(), 600);
       }
     } catch (err: any) {
       onLog('ERROR', `Error activating session: ${err.message}`);
@@ -319,9 +323,12 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
           'SUCCESS',
           `Mobile 1-Tap connected to session [${data.session.nickname}] successfully!`
         );
-        onNotify(`Mobile synced: ${data.session.nickname}`);
+        onNotify(`Mobile synced: ${data.session.nickname}. Opening Content section...`);
         await fetchSavedSessions();
-        setTimeout(() => setShowMobileSyncModal(false), 1500);
+        setTimeout(() => {
+          setShowMobileSyncModal(false);
+          onGoToContent();
+        }, 900);
       } else {
         setSyncStatusMsg(data.error || 'Invalid or expired PIN.');
       }
@@ -373,9 +380,12 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
           'SUCCESS',
           `Mobile login [${data.session.nickname}] imported (${mobileImportSource}) and saved to permanent vault.`
         );
-        onNotify(`Mobile session "${data.session.nickname}" saved!`);
+        onNotify(`Mobile session "${data.session.nickname}" saved! Opening Content section...`);
         await fetchSavedSessions();
-        setTimeout(() => setShowMobileSyncModal(false), 1500);
+        setTimeout(() => {
+          setShowMobileSyncModal(false);
+          onGoToContent();
+        }, 900);
       } else {
         setSyncStatusMsg(data.error || 'Failed to save mobile session.');
       }
@@ -552,6 +562,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
 
     onAddTargetDirect(newTarget);
     onLog('SUCCESS', `Added real page [${page.name}] (ID: ${page.id}) to schedule queue!`);
+    setTimeout(() => onGoToContent(), 400);
   };
 
   // Add manual real page
@@ -585,6 +596,7 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
     setNewPageName('');
     setNewPageId('');
     setNewPageToken('');
+    setTimeout(() => onGoToContent(), 400);
   };
 
   // Connect to AdsPower Port
@@ -602,7 +614,9 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
       const data = await res.json();
       if (data.connected) {
         setAdsPowerStatus(`Connected to Chrome/AdsPower debugging port ${adsPowerPort}`);
-        onLog('SUCCESS', `Connected to local browser instance on port ${adsPowerPort}.`);
+        onLog('SUCCESS', `Connected to local browser instance on port ${adsPowerPort}. Moving to Content section...`);
+        onNotify(`Port ${adsPowerPort} connected! Moving to Content section...`);
+        setTimeout(() => onGoToContent(), 600);
       } else {
         setAdsPowerStatus(data.message);
         onLog('INFO', `Port check notice: ${data.message}`);
@@ -651,8 +665,9 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
     });
 
     setAccounts((prev) => [...prev, ...newAccounts]);
-    onLog('SUCCESS', `Parsed and added ${addedCount} account(s) into active session storage.`);
-    onNotify(`Added ${addedCount} account(s) to queue`);
+    onLog('SUCCESS', `Verified & added ${addedCount} account(s) into active session storage. Moving to Content section...`);
+    onNotify(`Verified ${addedCount} account(s)! Moving to Content section...`);
+    setTimeout(() => onGoToContent(), 600);
   };
 
   const handleDeleteAccount = (id: string) => {
@@ -1468,8 +1483,9 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
                   <button
                     type="button"
                     onClick={() => {
-                      onLog('INFO', `Verified active session for UID: ${acc.c_user}`);
-                      onNotify(`Session ${acc.nickname} (UID: ${acc.c_user}) active!`);
+                      onLog('SUCCESS', `Verified active session for UID: ${acc.c_user}. Opening Content section...`);
+                      onNotify(`Session ${acc.nickname} verified! Moving to Content section...`);
+                      setTimeout(() => onGoToContent(), 500);
                     }}
                     className="px-2.5 py-1 text-[11px] font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 cursor-pointer"
                   >
