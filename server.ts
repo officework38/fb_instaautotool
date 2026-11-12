@@ -923,7 +923,7 @@ FIXES APPLIED:
 ========================================================================================
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import platform
 import subprocess
@@ -1180,21 +1180,25 @@ class MultiAccountProApp:
         f_time_inner = tk.Frame(f_time_bulk)
         f_time_inner.pack(padx=10, pady=5, anchor="w")
 
+        default_dt = datetime.now() + timedelta(minutes=3)
         tk.Label(f_time_inner, text="Date (YYYY-MM-DD):", font=("Arial", 9)).grid(row=0, column=0, padx=5, sticky="w")
         self.entry_bulk_date = tk.Entry(f_time_inner, width=12)
         self.entry_bulk_date.grid(row=0, column=1, padx=5)
-        self.entry_bulk_date.insert(0, datetime.now().strftime("%Y-%m-%d"))
+        self.entry_bulk_date.insert(0, default_dt.strftime("%Y-%m-%d"))
 
         tk.Label(f_time_inner, text="Time (HH:MM):", font=("Arial", 9)).grid(row=0, column=2, padx=5, sticky="w")
         self.entry_bulk_time = tk.Entry(f_time_inner, width=10)
         self.entry_bulk_time.grid(row=0, column=3, padx=5)
-        self.entry_bulk_time.insert(0, "12:00")
+        self.entry_bulk_time.insert(0, default_dt.strftime("%H:%M"))
+
+        btn_refresh_time = tk.Button(f_time_inner, text="🔄 Refresh (+3m)", bg="#28a745", fg="white", font=("Arial", 8, "bold"), command=self.refresh_start_time_plus_3)
+        btn_refresh_time.grid(row=0, column=4, padx=5)
 
         self.chk_apply_all_time = tk.IntVar(value=1)
-        tk.Checkbutton(f_time_inner, text="Apply Date/Time to ALL Pages", variable=self.chk_apply_all_time, font=("Arial", 9, "bold")).grid(row=0, column=4, padx=15)
+        tk.Checkbutton(f_time_inner, text="Apply Date/Time to ALL Pages", variable=self.chk_apply_all_time, font=("Arial", 9, "bold")).grid(row=0, column=5, padx=12)
 
         btn_apply_time = tk.Button(f_time_inner, text="⏰ Apply Time to All", bg="#007ACC", fg="white", font=("Arial", 8, "bold"), command=self.apply_bulk_time_to_table)
-        btn_apply_time.grid(row=0, column=5, padx=5)
+        btn_apply_time.grid(row=0, column=6, padx=5)
 
         f_cont_top = tk.Frame(self.tab_content)
         f_cont_top.pack(fill="x", padx=15, pady=(5, 2))
@@ -1256,6 +1260,14 @@ class MultiAccountProApp:
 
         btn_to_scheduler = tk.Button(f_actions, text="Proceed to Master Scheduler ➔", bg="#007ACC", fg="white", font=("Arial", 9, "bold"), command=self.go_to_scheduler)
         btn_to_scheduler.pack(side=tk.LEFT, padx=15)
+
+    def refresh_start_time_plus_3(self):
+        next_dt = datetime.now() + timedelta(minutes=3)
+        self.entry_bulk_date.delete(0, tk.END)
+        self.entry_bulk_date.insert(0, next_dt.strftime("%Y-%m-%d"))
+        self.entry_bulk_time.delete(0, tk.END)
+        self.entry_bulk_time.insert(0, next_dt.strftime("%H:%M"))
+        self.log_message(f"Refreshed Start Time to {next_dt.strftime('%Y-%m-%d %H:%M')} (+3m)")
 
     def setup_scheduler_tab(self):
         f_clock = tk.LabelFrame(self.tab_scheduler, text=" 🕒 Live System Clock & Real-Time Background Engine ", font=("Arial", 10, "bold"), fg="#6f42c1")

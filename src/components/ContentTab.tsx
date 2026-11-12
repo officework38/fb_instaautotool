@@ -14,9 +14,23 @@ import {
   Check,
   Tag,
   Hash,
+  RefreshCw,
 } from 'lucide-react';
 import { TargetItem, TargetType } from '../types';
 import { SAMPLE_VIDEOS } from '../data/initialData';
+
+function getFutureDateTime(offsetMinutes = 3): { date: string; time: string } {
+  const dt = new Date(Date.now() + offsetMinutes * 60 * 1000);
+  const yyyy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  const hh = String(dt.getHours()).padStart(2, '0');
+  const min = String(dt.getMinutes()).padStart(2, '0');
+  return {
+    date: `${yyyy}-${mm}-${dd}`,
+    time: `${hh}:${min}`,
+  };
+}
 
 interface ContentTabProps {
   targets: TargetItem[];
@@ -42,17 +56,30 @@ export const ContentTab: React.FC<ContentTabProps> = ({
   );
   const [applyAllCaption, setApplyAllCaption] = useState(true);
 
-  const todayStr = new Date().toISOString().split('T')[0];
-  const [bulkDate, setBulkDate] = useState(todayStr);
-  const [bulkTime, setBulkTime] = useState('12:00');
+  const initialSlot = getFutureDateTime(3);
+  const [bulkDate, setBulkDate] = useState(initialSlot.date);
+  const [bulkTime, setBulkTime] = useState(initialSlot.time);
   const [staggerMinutes, setStaggerMinutes] = useState(0); // 0 = uniform, 2 = +2m, 5 = +5m, 10 = +10m
   const [applyAllTime, setApplyAllTime] = useState(true);
+  const [timeStatusMsg, setTimeStatusMsg] = useState<string | null>(
+    `Auto-set to ${initialSlot.time} (+3m from now)`
+  );
+  const [confirmClearTable, setConfirmClearTable] = useState(false);
 
   // Selected table row IDs
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   // Modal states for row edit
   const [editingTarget, setEditingTarget] = useState<TargetItem | null>(null);
+
+  // Refresh Start Time to Current Time + 3 Minutes
+  const handleRefreshStartTime = () => {
+    const next = getFutureDateTime(3);
+    setBulkDate(next.date);
+    setBulkTime(next.time);
+    setTimeStatusMsg(`Refreshed start time to ${next.time} (+3m from current time)`);
+    onLog('INFO', `Refreshed Content Start Time to ${next.date} ${next.time} (+3 mins).`);
+  };
 
   // Quick hashtag inserter
   const insertHashtag = (tag: string) => {
@@ -62,11 +89,11 @@ export const ContentTab: React.FC<ContentTabProps> = ({
   // 1. Apply Bulk Caption to Table
   const handleApplyBulkCaption = () => {
     if (!bulkCaption.trim()) {
-      alert('Please enter a caption first!');
+      setTimeStatusMsg('Please enter a caption first!');
       return;
     }
     if (targets.length === 0) {
-      alert('No targets in table to apply caption to!');
+      setTimeStatusMsg('No targets in table to apply caption to.');
       return;
     }
 
@@ -87,11 +114,11 @@ export const ContentTab: React.FC<ContentTabProps> = ({
   // 2. Apply Bulk Date and Time with optional Stagger
   const handleApplyBulkTime = () => {
     if (!bulkDate || !bulkTime) {
-      alert('Please enter a valid date and time!');
+      setTimeStatusMsg('Please enter a valid date and time!');
       return;
     }
     if (targets.length === 0) {
-      alert('No targets in table!');
+      setTimeStatusMsg('No targets in table!');
       return;
     }
 
@@ -143,12 +170,12 @@ export const ContentTab: React.FC<ContentTabProps> = ({
         .filter(Boolean);
 
       if (lines.length === 0) {
-        alert('The selected text file is empty!');
+        setTimeStatusMsg('The selected text file is empty.');
         return;
       }
 
       if (targets.length === 0) {
-        alert('No targets in table! Please add targets or verify accounts first.');
+        setTimeStatusMsg('No targets in table! Please add targets or verify accounts first.');
         return;
       }
 
@@ -195,7 +222,7 @@ export const ContentTab: React.FC<ContentTabProps> = ({
 
   const handleUndoDelete = () => {
     if (deletedStack.length === 0) {
-      alert('No deleted items to undo!');
+      setTimeStatusMsg('No deleted items to undo.');
       return;
     }
     const lastDeleted = deletedStack[deletedStack.length - 1];
@@ -206,11 +233,14 @@ export const ContentTab: React.FC<ContentTabProps> = ({
 
   const handleClearTable = () => {
     if (targets.length === 0) return;
-    if (confirm('Are you sure you want to clear all targets from the table?')) {
-      setDeletedStack((prev) => [...prev, ...targets]);
-      setTargets([]);
-      onLog('WARN', 'Cleared all targets from table. Undo is available via Ctrl+Z.');
+    if (!confirmClearTable) {
+      setConfirmClearTable(true);
+      return;
     }
+    setDeletedStack((prev) => [...prev, ...targets]);
+    setTargets([]);
+    setConfirmClearTable(false);
+    onLog('WARN', 'Cleared all targets from table. Undo is available via Ctrl+Z.');
   };
 
   // Add new manual target
@@ -329,14 +359,25 @@ export const ContentTab: React.FC<ContentTabProps> = ({
 
           <div>
             <label className="block text-xs font-medium text-slate-300 mb-1">
-              Start Time (HH:MM)
+              Start Time (HH:MM • +3m Auto)
             </label>
-            <input
-              type="time"
-              value={bulkTime}
-              onChange={(e) => setBulkTime(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-blue-500"
-            />
+            <div className="flex items-center gap-1.5">
+              <input
+                type="time"
+                value={bulkTime}
+                onChange={(e) => setBulkTime(e.target.value)}
+                className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono tabular-nums text-slate-100 focus:outline-none focus:border-blue-500"
+              />
+              <button
+                type="button"
+                onClick={handleRefreshStartTime}
+                title="Refresh Start Time to Current Time + 3 Minutes"
+                className="px-2.5 py-2 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 text-xs font-semibold rounded-lg cursor-pointer transition-colors flex items-center gap-1 shrink-0"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Refresh</span>
+              </button>
+            </div>
           </div>
 
           <div>
@@ -367,6 +408,12 @@ export const ContentTab: React.FC<ContentTabProps> = ({
             </button>
           </div>
         </div>
+
+        {timeStatusMsg && (
+          <div className="mt-2.5 text-[11px] font-mono tabular-nums text-emerald-400">
+            {timeStatusMsg}
+          </div>
+        )}
       </section>
 
       {/* 3. Assigned Targets Table */}
@@ -414,14 +461,33 @@ export const ContentTab: React.FC<ContentTabProps> = ({
               <span>Add Target</span>
             </button>
 
-            <button
-              type="button"
-              onClick={handleClearTable}
-              className="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-medium rounded-lg cursor-pointer flex items-center gap-1.5"
-            >
-              <Trash2 className="w-3.5 h-3.5" />
-              <span>Clear Table</span>
-            </button>
+            {confirmClearTable ? (
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={handleClearTable}
+                  className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded-lg cursor-pointer"
+                >
+                  Confirm Clear
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmClearTable(false)}
+                  className="px-2.5 py-1.5 bg-slate-800 text-slate-300 text-xs rounded-lg cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleClearTable}
+                className="px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 text-xs font-medium rounded-lg cursor-pointer flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Clear Table</span>
+              </button>
+            )}
           </div>
         </div>
 
