@@ -15,6 +15,7 @@ import {
   Tag,
   Hash,
   RefreshCw,
+  FolderOpen,
 } from 'lucide-react';
 import { TargetItem, TargetType } from '../types';
 import { SAMPLE_VIDEOS } from '../data/initialData';
@@ -211,6 +212,54 @@ export const ContentTab: React.FC<ContentTabProps> = ({
       })
     );
     onLog('SUCCESS', `Auto-assigned high-quality video reels to all ${targets.length} targets.`);
+  };
+
+  // 4b. Choose real video file(s) from device for all targets
+  const handleChooseVideosForAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    if (targets.length === 0) {
+      setTimeStatusMsg('No targets in table! Add a target first.');
+      e.target.value = '';
+      return;
+    }
+
+    const fileList: File[] = Array.from(files);
+    setTargets((prev) =>
+      prev.map((item, idx) => {
+        const picked = fileList[idx % fileList.length];
+        const objectUrl = URL.createObjectURL(picked);
+        return {
+          ...item,
+          videoPath: objectUrl,
+          videoName: picked.name,
+        };
+      })
+    );
+    setTimeStatusMsg(`Assigned ${fileList.length} chosen video(s) across ${targets.length} target(s).`);
+    onLog('SUCCESS', `User chose ${fileList.length} local video file(s) and assigned across queue.`);
+    e.target.value = '';
+  };
+
+  // 4c. Choose a real video file from device for a single table row
+  const handleChooseRowVideo = (targetId: string, e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const objectUrl = URL.createObjectURL(file);
+    setTargets((prev) =>
+      prev.map((t) =>
+        t.id === targetId
+          ? {
+              ...t,
+              videoPath: objectUrl,
+              videoName: file.name,
+            }
+          : t
+      )
+    );
+    setTimeStatusMsg(`Selected video "${file.name}" for target.`);
+    onLog('INFO', `Selected local video [${file.name}] for target ID: ${targetId}.`);
+    e.target.value = '';
   };
 
   // 5. Delete and Undo Management
@@ -431,6 +480,18 @@ export const ContentTab: React.FC<ContentTabProps> = ({
 
           {/* Quick Action Buttons */}
           <div className="flex flex-wrap items-center gap-2">
+            <label className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg cursor-pointer flex items-center gap-1.5 shadow-sm">
+              <FolderOpen className="w-3.5 h-3.5" />
+              <span>Choose Video(s)</span>
+              <input
+                type="file"
+                multiple
+                accept="video/*,.mp4,.mov,.mkv,.avi,.webm"
+                onChange={handleChooseVideosForAll}
+                className="hidden"
+              />
+            </label>
+
             <button
               type="button"
               onClick={handleAssignSampleVideos}
@@ -559,7 +620,7 @@ export const ContentTab: React.FC<ContentTabProps> = ({
                         </span>
                       </td>
 
-                      <td className="py-2.5 px-3 max-w-[220px]">
+                      <td className="py-2.5 px-3 max-w-[260px]">
                         <div className="flex items-center gap-1.5">
                           <button
                             type="button"
@@ -570,12 +631,25 @@ export const ContentTab: React.FC<ContentTabProps> = ({
                             <Play className="w-3 h-3 fill-current" />
                           </button>
                           <span
-                            className="truncate text-[11px] font-mono text-slate-300 cursor-pointer hover:text-blue-400"
+                            className="truncate flex-1 text-[11px] font-mono text-slate-300 cursor-pointer hover:text-blue-400"
                             onClick={() => setEditingTarget(item)}
                             title={item.videoPath}
                           >
                             {item.videoName || item.videoPath}
                           </span>
+                          <label
+                            title="Choose video file from device"
+                            className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 rounded text-[10px] font-semibold cursor-pointer flex items-center gap-1 shrink-0"
+                          >
+                            <FolderOpen className="w-3 h-3" />
+                            <span>Choose</span>
+                            <input
+                              type="file"
+                              accept="video/*,.mp4,.mov,.mkv,.avi,.webm"
+                              onChange={(e) => handleChooseRowVideo(item.id, e)}
+                              className="hidden"
+                            />
+                          </label>
                         </div>
                       </td>
 
@@ -718,14 +792,40 @@ export const ContentTab: React.FC<ContentTabProps> = ({
               <label className="block text-xs font-medium text-slate-300 mb-1">
                 Assigned Video Path / Name
               </label>
-              <input
-                type="text"
-                value={editingTarget.videoPath}
-                onChange={(e) =>
-                  setEditingTarget({ ...editingTarget, videoPath: e.target.value })
-                }
-                className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs font-mono text-slate-100"
-              />
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={editingTarget.videoName || editingTarget.videoPath}
+                  onChange={(e) =>
+                    setEditingTarget({
+                      ...editingTarget,
+                      videoPath: e.target.value,
+                      videoName: e.target.value,
+                    })
+                  }
+                  className="flex-1 bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs font-mono text-slate-100"
+                />
+                <label className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg cursor-pointer flex items-center gap-1.5 shrink-0">
+                  <FolderOpen className="w-3.5 h-3.5" />
+                  <span>Choose Video</span>
+                  <input
+                    type="file"
+                    accept="video/*,.mp4,.mov,.mkv,.avi,.webm"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const objectUrl = URL.createObjectURL(file);
+                      setEditingTarget({
+                        ...editingTarget,
+                        videoPath: objectUrl,
+                        videoName: file.name,
+                      });
+                      e.target.value = '';
+                    }}
+                    className="hidden"
+                  />
+                </label>
+              </div>
             </div>
 
             <div>

@@ -15,13 +15,16 @@ export const MediaPreviewModal: React.FC<MediaPreviewModalProps> = ({
 }) => {
   if (!mediaPath) return null;
 
-  // Find if matching one of the sample video streaming URLs
+  // Play chosen local video blob URL or sample streaming URL
   const sample = SAMPLE_VIDEOS.find(
     (v) => v.path === mediaPath || v.name === mediaName
   );
-  const streamUrl = sample
-    ? sample.url
-    : 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
+  const streamUrl =
+    mediaPath.startsWith('blob:') || mediaPath.startsWith('http')
+      ? mediaPath
+      : sample
+      ? sample.url
+      : 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">

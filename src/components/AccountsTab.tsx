@@ -20,6 +20,7 @@ import {
   Check,
   X,
   Chrome,
+  FolderOpen,
 } from 'lucide-react';
 import {
   AccountItem,
@@ -91,6 +92,8 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
   const [newPageId, setNewPageId] = useState('');
   const [newPageType, setNewPageType] = useState<'Page' | 'Profile' | 'Instagram' | 'Group'>('Page');
   const [newPageToken, setNewPageToken] = useState('');
+  const [newPageVideoPath, setNewPageVideoPath] = useState(SAMPLE_VIDEOS[0].path);
+  const [newPageVideoName, setNewPageVideoName] = useState(SAMPLE_VIDEOS[0].name);
 
   // Persistent Sessions Vault state ("Save Once, Never Log In Again")
   const [savedSessions, setSavedSessions] = useState<SavedSession[]>([]);
@@ -581,8 +584,8 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
       pageId: cleanId,
       pageToken: newPageToken.trim() || undefined,
       pageUrl: `https://facebook.com/${cleanId}`,
-      videoPath: SAMPLE_VIDEOS[0].path,
-      videoName: SAMPLE_VIDEOS[0].name,
+      videoPath: newPageVideoPath || SAMPLE_VIDEOS[0].path,
+      videoName: newPageVideoName || newPageVideoPath || SAMPLE_VIDEOS[0].name,
       caption: `Check out our latest update! Follow ${newPageName} for daily deals & reels. #viral #reels`,
       date: todayStr,
       time: '12:00',
@@ -596,6 +599,8 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
     setNewPageName('');
     setNewPageId('');
     setNewPageToken('');
+    setNewPageVideoPath(SAMPLE_VIDEOS[0].path);
+    setNewPageVideoName(SAMPLE_VIDEOS[0].name);
     setTimeout(() => onGoToContent(), 400);
   };
 
@@ -1764,6 +1769,40 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
               <span className="text-[10px] text-slate-500 mt-1 block">
                 Agar Page Token available ho to direct Meta Graph API se post hogi, warna automated browser RPA chalega.
               </span>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-300 mb-1">
+                Assigned Video Path / File
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={newPageVideoName || newPageVideoPath}
+                  onChange={(e) => {
+                    setNewPageVideoPath(e.target.value);
+                    setNewPageVideoName(e.target.value);
+                  }}
+                  placeholder="Choose video or enter path..."
+                  className="flex-1 bg-slate-950 border border-slate-800 rounded-lg p-2 text-xs font-mono text-slate-100 placeholder:text-slate-600"
+                />
+                <label className="px-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold rounded-lg cursor-pointer flex items-center gap-1.5 shrink-0">
+                  <FolderOpen className="w-3.5 h-3.5" />
+                  <span>Choose Video</span>
+                  <input
+                    type="file"
+                    accept="video/*,.mp4,.mov,.mkv,.avi,.webm"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setNewPageVideoPath(URL.createObjectURL(file));
+                      setNewPageVideoName(file.name);
+                      e.target.value = '';
+                    }}
+                    className="hidden"
+                  />
+                </label>
+              </div>
             </div>
 
             <div className="flex justify-end gap-2 pt-3 border-t border-slate-800">

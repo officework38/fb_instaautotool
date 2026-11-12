@@ -1936,7 +1936,17 @@ class MultiAccountProApp:
         self.log_message(f"Applied bulk schedule time ({b_date} {b_time}) across all rows.")
 
     def manual_edit_path_for_row(self):
-        self.import_video_paths_file()
+        selected = self.tree.selection()
+        if not selected:
+            self.import_video_paths_file()
+            return
+        file_path = filedialog.askopenfilename(title="Choose Video File", filetypes=[("Video Files", "*.mp4 *.mov *.avi *.mkv"), ("All Files", "*.*")])
+        if not file_path:
+            return
+        for item in selected:
+            v = self.tree.item(item, "values")
+            self.tree.item(item, values=(v[0], v[1], file_path, v[3], v[4], v[5], v[6], v[7]))
+        self.log_message(f"Chosen video [{file_path}] for selected row(s).")
 
     def edit_caption_for_row(self):
         selected = self.tree.selection()
@@ -1989,7 +1999,13 @@ class MultiAccountProApp:
     def on_table_click(self, event):
         col = self.tree.identify_column(event.x)
         item = self.tree.identify_row(event.y)
-        if col == "#8" and item:
+        if col == "#7" and item:
+            file_path = filedialog.askopenfilename(title="Choose Video File", filetypes=[("Video Files", "*.mp4 *.mov *.avi *.mkv"), ("All Files", "*.*")])
+            if file_path:
+                v = self.tree.item(item, "values")
+                self.tree.item(item, values=(v[0], v[1], file_path, v[3], v[4], v[5], v[6], v[7]))
+                self.log_message(f"Chosen video [{file_path}] for [{v[0]}].")
+        elif col == "#8" and item:
             vals = self.tree.item(item, "values")
             self.deleted_rows_stack.append(("tab2", vals))
             self.tree.delete(item)

@@ -10,6 +10,7 @@ import {
   Video,
   Lock,
   Bot,
+  FolderOpen,
 } from 'lucide-react';
 import { HumanBehaviorConfig, SavedSession, TargetItem } from '../types';
 
@@ -92,6 +93,28 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
     } catch {
       return 'Scheduled';
     }
+  };
+
+  const handleChooseTargetVideo = (
+    targetId: string,
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const objectUrl = URL.createObjectURL(file);
+    setTargets((prev) =>
+      prev.map((t) =>
+        t.id === targetId
+          ? {
+              ...t,
+              videoPath: objectUrl,
+              videoName: file.name,
+            }
+          : t
+      )
+    );
+    onLog('INFO', `Updated video for target [${targetId}] to [${file.name}].`);
+    e.target.value = '';
   };
 
   return (
@@ -271,10 +294,26 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
                         </span>
                       </td>
 
-                      <td className="py-2.5 px-3 max-w-[240px]">
-                        <span className="truncate font-mono text-[11px] text-slate-300 block">
-                          {item.videoName || item.videoPath}
-                        </span>
+                      <td className="py-2.5 px-3 max-w-[260px]">
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate flex-1 font-mono text-[11px] text-slate-300 block">
+                            {item.videoName || item.videoPath}
+                          </span>
+                          <label
+                            onClick={(e) => e.stopPropagation()}
+                            title="Choose video file from device"
+                            className="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-emerald-300 border border-slate-700 rounded text-[10px] font-semibold cursor-pointer flex items-center gap-1 shrink-0"
+                          >
+                            <FolderOpen className="w-3 h-3" />
+                            <span>Choose</span>
+                            <input
+                              type="file"
+                              accept="video/*,.mp4,.mov,.mkv,.avi,.webm"
+                              onChange={(e) => handleChooseTargetVideo(item.id, e)}
+                              className="hidden"
+                            />
+                          </label>
+                        </div>
                       </td>
 
                       <td className="py-2.5 px-3 max-w-[220px]">
@@ -368,8 +407,22 @@ export const SchedulerTab: React.FC<SchedulerTabProps> = ({
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs font-mono">
               <div>
-                <span className="text-slate-500 block text-[11px]">Assigned Video Path:</span>
-                <span className="text-slate-200 break-all">{selectedTarget.videoPath}</span>
+                <span className="text-slate-500 block text-[11px] mb-1">Assigned Video Path:</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-200 break-all flex-1">
+                    {selectedTarget.videoName || selectedTarget.videoPath}
+                  </span>
+                  <label className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-sans font-semibold rounded flex items-center gap-1 cursor-pointer shrink-0">
+                    <FolderOpen className="w-3 h-3" />
+                    <span>Choose Video</span>
+                    <input
+                      type="file"
+                      accept="video/*,.mp4,.mov,.mkv,.avi,.webm"
+                      onChange={(e) => handleChooseTargetVideo(selectedTarget.id, e)}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
               </div>
 
               <div>
