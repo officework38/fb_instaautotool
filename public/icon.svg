@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1877F2"/>
+      <stop offset="50%" stop-color="#0E5ECC"/>
+      <stop offset="100%" stop-color="#7B1FA2"/>
+    </linearGradient>
+    <linearGradient id="insta" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FD5949"/>
+      <stop offset="50%" stop-color="#D6249F"/>
+      <stop offset="100%" stop-color="#285AEB"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- Background rounded squircle -->
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- Inner circle accent -->
+  <circle cx="256" cy="256" r="180" fill="#ffffff" fill-opacity="0.08"/>
+
+  <!-- Logo Graphics: FB 'f' and Instagram Camera & Play Sparkle -->
+  <g filter="url(#shadow)">
+    <!-- Calendar & Scheduler base icon -->
+    <rect x="120" y="140" width="272" height="250" rx="32" fill="#ffffff"/>
+    <rect x="120" y="140" width="272" height="70" rx="20" fill="#1877F2"/>
+    
+    <!-- Calendar Rings -->
+    <rect x="180" y="115" width="22" height="48" rx="11" fill="#0E5ECC"/>
+    <rect x="310" y="115" width="22" height="48" rx="11" fill="#0E5ECC"/>
+
+    <!-- FB Bold Letter f in center -->
+    <path d="M 276 270 L 276 355 L 240 355 L 240 270 L 222 270 L 222 238 L 240 238 L 240 216 C 240 197 252 182 274 182 C 283 182 291 184 294 185 L 290 213 C 286 212 282 211 278 211 C 270 211 268 215 268 223 L 268 238 L 294 238 L 290 270 Z" fill="#1877F2"/>
+    
+    <!-- Rocket / Automation badge bottom right -->
+    <circle cx="360" cy="360" r="44" fill="url(#insta)"/>
+    <path d="M 352 342 L 372 360 L 352 378 Z" fill="#ffffff"/>
+  </g>
+</svg>

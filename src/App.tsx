@@ -5,6 +5,7 @@ import { ContentTab } from './components/ContentTab';
 import { SchedulerTab } from './components/SchedulerTab';
 import { TerminalTab } from './components/TerminalTab';
 import { PythonFixTab } from './components/PythonFixTab';
+import { DownloadAppTab } from './components/DownloadAppTab';
 import { RpaSimulationModal } from './components/RpaSimulationModal';
 import { MediaPreviewModal } from './components/MediaPreviewModal';
 import {
@@ -18,7 +19,7 @@ import { CheckCircle2, AlertCircle, Sparkles } from 'lucide-react';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<
-    'accounts' | 'content' | 'scheduler' | 'terminal' | 'python'
+    'accounts' | 'content' | 'scheduler' | 'terminal' | 'python' | 'download'
   >('accounts');
 
   // Accounts state
@@ -294,6 +295,7 @@ export default function App() {
         )}
 
         {activeTab === 'python' && <PythonFixTab />}
+        {activeTab === 'download' && <DownloadAppTab />}
       </main>
 
       {/* Live RPA Visual Browser Simulation Modal */}

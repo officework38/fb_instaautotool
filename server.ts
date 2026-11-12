@@ -1,10 +1,80 @@
 import express from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
+import JSZip from 'jszip';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const SESSIONS_VAULT_FILE = path.resolve(__dirname, 'sessions_vault.json');
+
+interface SavedSessionRecord {
+  id: string;
+  nickname: string;
+  c_user: string;
+  source: 'mobile_app' | 'mobile_browser' | 'system_chrome' | 'cookie_vault';
+  cookies: string;
+  accessToken?: string;
+  savedAt: string;
+  lastUsed: string;
+  isActive: boolean;
+  avatarUrl?: string;
+}
+
+function getStoredSessions(): SavedSessionRecord[] {
+  try {
+    if (fs.existsSync(SESSIONS_VAULT_FILE)) {
+      const data = fs.readFileSync(SESSIONS_VAULT_FILE, 'utf-8');
+      return JSON.parse(data);
+    }
+  } catch (err) {
+    console.error('Error reading sessions_vault.json:', err);
+  }
+  const initial: SavedSessionRecord[] = [
+    {
+      id: 'session-main-1',
+      nickname: 'BestYou_Personal_Profile',
+      c_user: '61561547737841',
+      source: 'system_chrome',
+      cookies:
+        'datr=z2Niau_VrYxapXvkjmDInemI; sb=z2NianZvQAhzQHGIE8qDKfpJ; c_user=61561547737841; xs=6%3AgKqgsWap84Fqfw%3A2%3A1784833381%3A-1%3A-1%3A%3AAcx92WMHlhPDATmFIp-VnWc3J6zQDfFhQharTGz0FA;',
+      accessToken: 'EAABwz9842a84920192849012849012ZDZD',
+      savedAt: new Date(Date.now() - 3600000 * 24 * 3).toISOString(),
+      lastUsed: new Date().toISOString(),
+      isActive: true,
+      avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=face',
+    },
+    {
+      id: 'session-mobile-2',
+      nickname: 'Mobile_FB_App_Sync',
+      c_user: '100084920194821',
+      source: 'mobile_app',
+      cookies:
+        'c_user=100084920194821; xs=4%3A5mYq932K:2:1784833381:-1:-1; datr=k9Wiauz_VrX;',
+      savedAt: new Date(Date.now() - 3600000 * 6).toISOString(),
+      lastUsed: new Date(Date.now() - 3600000 * 2).toISOString(),
+      isActive: false,
+      avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&h=100&fit=crop&crop=face',
+    },
+  ];
+  try {
+    fs.writeFileSync(SESSIONS_VAULT_FILE, JSON.stringify(initial, null, 2), 'utf-8');
+  } catch {}
+  return initial;
+}
+
+function writeStoredSessions(sessions: SavedSessionRecord[]) {
+  try {
+    fs.writeFileSync(SESSIONS_VAULT_FILE, JSON.stringify(sessions, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Error writing sessions_vault.json:', err);
+  }
+}
+
+// Temporary in-memory sync codes for 1-tap mobile pairing (expires in 15 mins)
+const mobileSyncStore = new Map<string, { session: SavedSessionRecord; expiresAt: number }>();
 
 interface SystemLog {
   id: string;
@@ -19,7 +89,7 @@ const memoryLogs: SystemLog[] = [
     id: 'log-1',
     timestamp: new Date().toISOString(),
     level: 'INFO',
-    message: 'FB & Insta Pro Auto-Scheduler v40.1 Engine Initialized. Ready for multi-account automation.',
+    message: 'FB & Insta Pro Auto-Scheduler v40.2 Real Human & Session Vault Engine Active.',
   },
 ];
 
@@ -303,12 +373,391 @@ async function startServer() {
     res.json({ success: true });
   });
 
+  // ================= SAVED SESSIONS & MOBILE SYNC VAULT =================
+
+  // Get all saved persistent sessions
+  app.get('/api/fb/saved-sessions', (req, res) => {
+    const sessions = getStoredSessions();
+    res.json({ success: true, sessions });
+  });
+
+  // Save new session permanently (Never Log In Again)
+  app.post('/api/fb/saved-sessions', (req, res) => {
+    const { nickname, c_user, source, cookies, accessToken, avatarUrl } = req.body;
+    if (!cookies && !c_user) {
+      return res.status(400).json({ error: 'Cookie string or c_user is required to save session.' });
+    }
+
+    const sessions = getStoredSessions();
+    const cleanCUser =
+      c_user ||
+      (cookies ? cookies.match(/c_user=([0-9]+)/)?.[1] : null) ||
+      `user_${Date.now()}`;
+
+    // Mark previous active session inactive if new one is added
+    sessions.forEach((s) => (s.isActive = false));
+
+    const newSession: SavedSessionRecord = {
+      id: `session-${Date.now()}`,
+      nickname: nickname?.trim() || `FB_Profile_${cleanCUser.slice(-4)}`,
+      c_user: cleanCUser,
+      source: source || 'system_chrome',
+      cookies: cookies?.trim() || '',
+      accessToken: accessToken?.trim() || undefined,
+      savedAt: new Date().toISOString(),
+      lastUsed: new Date().toISOString(),
+      isActive: true,
+      avatarUrl:
+        avatarUrl ||
+        'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=face',
+    };
+
+    sessions.unshift(newSession);
+    writeStoredSessions(sessions);
+
+    memoryLogs.push({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      level: 'SUCCESS',
+      message: `🔒 Session [${newSession.nickname}] saved permanently in vault. Auto-restore enabled for future runs!`,
+    });
+
+    res.json({ success: true, session: newSession, count: sessions.length });
+  });
+
+  // Delete saved session
+  app.delete('/api/fb/saved-sessions/:id', (req, res) => {
+    const { id } = req.params;
+    let sessions = getStoredSessions();
+    sessions = sessions.filter((s) => s.id !== id);
+    writeStoredSessions(sessions);
+    res.json({ success: true, count: sessions.length });
+  });
+
+  // Activate a saved session
+  app.post('/api/fb/saved-sessions/:id/activate', (req, res) => {
+    const { id } = req.params;
+    const sessions = getStoredSessions();
+    let activated: SavedSessionRecord | null = null;
+
+    sessions.forEach((s) => {
+      if (s.id === id) {
+        s.isActive = true;
+        s.lastUsed = new Date().toISOString();
+        activated = s;
+      } else {
+        s.isActive = false;
+      }
+    });
+
+    if (!activated) {
+      return res.status(404).json({ error: 'Session not found in vault.' });
+    }
+
+    writeStoredSessions(sessions);
+    memoryLogs.push({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      level: 'SUCCESS',
+      message: `Restored persistent session [${(activated as any).nickname}] (c_user: ${(activated as any).c_user}). Ready for automated operations.`,
+    });
+
+    res.json({ success: true, session: activated });
+  });
+
+  // Mobile Sync: Generate 6-digit sync PIN from desktop session
+  app.post('/api/fb/mobile-sync/create', (req, res) => {
+    const { sessionId } = req.body;
+    const sessions = getStoredSessions();
+    const targetSession = sessions.find((s) => s.id === sessionId) || sessions.find((s) => s.isActive) || sessions[0];
+
+    if (!targetSession) {
+      return res.status(400).json({ error: 'No active session found to pair.' });
+    }
+
+    // Generate 6 digit pin
+    const pin = Math.floor(100000 + Math.random() * 900000).toString();
+    const expiresAt = Date.now() + 15 * 60 * 1000; // 15 mins
+
+    mobileSyncStore.set(pin, { session: targetSession, expiresAt });
+
+    memoryLogs.push({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      level: 'INFO',
+      message: `Generated Mobile Sync PIN: [${pin}] for session [${targetSession.nickname}]. Valid for 15 minutes.`,
+    });
+
+    res.json({
+      success: true,
+      pin,
+      expiresInSeconds: 900,
+      profileName: targetSession.nickname,
+      cUser: targetSession.c_user,
+    });
+  });
+
+  // Mobile Sync: Claim 6-digit PIN on mobile phone or another system
+  app.post('/api/fb/mobile-sync/claim', (req, res) => {
+    const { pin } = req.body;
+    if (!pin) {
+      return res.status(400).json({ error: 'PIN is required.' });
+    }
+
+    const cleanPin = pin.toString().trim();
+    const item = mobileSyncStore.get(cleanPin);
+
+    if (!item) {
+      return res.status(400).json({ error: 'Invalid or expired PIN code. Please generate a fresh code on your computer.' });
+    }
+
+    if (Date.now() > item.expiresAt) {
+      mobileSyncStore.delete(cleanPin);
+      return res.status(400).json({ error: 'PIN has expired. Please generate a new code.' });
+    }
+
+    // Add session to local sessions if not present
+    const sessions = getStoredSessions();
+    const existing = sessions.find((s) => s.c_user === item.session.c_user);
+    if (!existing) {
+      sessions.unshift({
+        ...item.session,
+        id: `session-synced-${Date.now()}`,
+        source: 'mobile_app',
+        nickname: `${item.session.nickname}_(Mobile_Sync)`,
+        lastUsed: new Date().toISOString(),
+        isActive: true,
+      });
+      writeStoredSessions(sessions);
+    }
+
+    memoryLogs.push({
+      id: `log-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      level: 'SUCCESS',
+      message: `🎉 Mobile device successfully linked to session [${item.session.nickname}] via PIN [${cleanPin}]!`,
+    });
+
+    res.json({ success: true, session: item.session });
+  });
+
+  // ======================================================================
+
   // 7. Fixed Python Code API
   app.get('/api/python/fixed-script', (req, res) => {
     const fixedScript = getFixedPythonScript();
     res.setHeader('Content-Type', 'text/x-python');
     res.setHeader('Content-Disposition', 'attachment; filename="fb_insta_scheduler_fixed.py"');
     res.send(fixedScript);
+  });
+
+  // 8. Direct Download: Windows One-Click Launcher (.bat)
+  app.get('/api/download/run-scheduler.bat', (req, res) => {
+    const batContent = `@echo off
+title FB & Insta Pro Auto-Scheduler v40.2 (Windows Laptop Runner)
+color 0b
+echo ==============================================================
+echo    FB & Insta Pro Auto-Scheduler v40.2 (Windows Launcher)
+echo ==============================================================
+echo Checking Python installation...
+python --version >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [ERROR] Python is not installed or not in PATH!
+    echo Please install Python 3.10+ from https://www.python.org/
+    echo Make sure to check "Add Python to PATH" during installation.
+    pause
+    exit /b
+)
+
+echo Checking and installing required packages (selenium, webdriver-manager)...
+python -m pip install --upgrade pip >nul 2>&1
+python -m pip install selenium webdriver-manager >nul 2>&1
+
+echo.
+echo Starting FB & Insta Pro Auto-Scheduler v40.2 in browser automation mode...
+start python fb_insta_scheduler_fixed.py
+exit
+`;
+    res.setHeader('Content-Type', 'application/x-bat');
+    res.setHeader('Content-Disposition', 'attachment; filename="run_scheduler_windows.bat"');
+    res.send(batContent);
+  });
+
+  // 9. Direct Download: PyInstaller Standalone .EXE Compiler (.bat)
+  app.get('/api/download/build-exe.bat', (req, res) => {
+    const buildBatContent = `@echo off
+title Build Standalone FB_Insta_Pro_Scheduler.exe
+color 0a
+echo ==============================================================
+echo    Building Standalone Windows .EXE with PyInstaller
+echo ==============================================================
+echo Step 1: Installing PyInstaller, Selenium, and Webdriver-Manager...
+pip install pyinstaller selenium webdriver-manager
+
+echo Step 2: Compiling fb_insta_scheduler_fixed.py to FB_Insta_Pro_Scheduler_v40.exe...
+pyinstaller --noconsole --onefile --name="FB_Insta_Pro_Scheduler_v40.exe" fb_insta_scheduler_fixed.py
+
+echo.
+echo ==============================================================
+echo Build Completed!
+echo Your standalone Windows .exe is located in the 'dist' folder:
+echo dist\\FB_Insta_Pro_Scheduler_v40.exe
+echo ==============================================================
+pause
+`;
+    res.setHeader('Content-Type', 'application/x-bat');
+    res.setHeader('Content-Disposition', 'attachment; filename="build_exe.bat"');
+    res.send(buildBatContent);
+  });
+
+  // 10. Windows Complete Laptop Setup Bundle (.ZIP containing .bat, .py, and PyInstaller builder)
+  app.get('/api/download/windows-exe-package', async (req, res) => {
+    try {
+      const zip = new JSZip();
+      const fixedPython = getFixedPythonScript();
+
+      const runBat = `@echo off
+title FB & Insta Pro Auto-Scheduler v40.2 (Windows Laptop Runner)
+color 0b
+echo ==============================================================
+echo    FB & Insta Pro Auto-Scheduler v40.2 (Windows Launcher)
+echo ==============================================================
+echo Checking Python installation...
+python --version >nul 2>&1
+if %errorlevel% neq 0 (
+    echo [ERROR] Python is not installed or not in PATH!
+    echo Please install Python 3.10+ from https://www.python.org/
+    echo Make sure to check "Add Python to PATH" during installation.
+    pause
+    exit /b
+)
+
+echo Checking and installing required packages (selenium, webdriver-manager)...
+python -m pip install --upgrade pip >nul 2>&1
+python -m pip install selenium webdriver-manager >nul 2>&1
+
+echo.
+echo Starting FB & Insta Pro Auto-Scheduler v40.2 in browser automation mode...
+start python fb_insta_scheduler_fixed.py
+exit
+`;
+
+      const buildBat = `@echo off
+title Build Standalone FB_Insta_Pro_Scheduler.exe
+color 0a
+echo ==============================================================
+echo    Building Standalone Windows .EXE with PyInstaller
+echo ==============================================================
+echo Step 1: Installing PyInstaller, Selenium, and Webdriver-Manager...
+pip install pyinstaller selenium webdriver-manager
+
+echo Step 2: Compiling fb_insta_scheduler_fixed.py to FB_Insta_Pro_Scheduler_v40.exe...
+pyinstaller --noconsole --onefile --name="FB_Insta_Pro_Scheduler_v40.exe" fb_insta_scheduler_fixed.py
+
+echo.
+echo ==============================================================
+echo Build Completed!
+echo Your standalone Windows .exe is located in the 'dist' folder:
+echo dist\\FB_Insta_Pro_Scheduler_v40.exe
+echo ==============================================================
+pause
+`;
+
+      const readme = `================================================================================
+FB & INSTA PRO AUTO-SCHEDULER v40.2 - WINDOWS LAPTOP (.EXE) SETUP GUIDE
+================================================================================
+
+Yeh package aapke laptop par chalane ke liye complete ready hai:
+
+1. METHOD 1 (Direct 1-Click Launch on Laptop):
+   - 'run_scheduler_windows.bat' file par double-click karein.
+   - Yeh khud Python environment check karega aur software ko open kar dega.
+
+2. METHOD 2 (Standalone .EXE Generate Karne Ka Tareeqa):
+   - 'build_exe.bat' file par double-click karein.
+   - Yeh PyInstaller ke zariye 'dist/FB_Insta_Pro_Scheduler_v40.exe' bana dega.
+   - Us standalone .exe file ko aap kisi bhi Windows laptop par chala sakte hain!
+
+3. REQUIREMENT:
+   - Python 3.10 ya latest (Windows Installer se 'Add Python to PATH' check karke install karein).
+   - Chrome Browser installed hona chahiye.
+
+Features in v40.2:
+- Real Page Fetching via Meta Business Suite, mbasic, Graph API, and Direct Page Add
+- Real Video Upload via file input injection
+- Live caption typing and automated publish/schedule
+================================================================================
+`;
+
+      zip.file('run_scheduler_windows.bat', runBat);
+      zip.file('build_exe.bat', buildBat);
+      zip.file('fb_insta_scheduler_fixed.py', fixedPython);
+      zip.file('README_WINDOWS_EXE_GUIDE.txt', readme);
+
+      const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', 'attachment; filename="FB_Insta_Pro_Scheduler_Windows_EXE_Bundle.zip"');
+      res.send(zipBuffer);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 11. Android APK & Mobile Package (.ZIP)
+  app.get('/api/download/android-package', async (req, res) => {
+    try {
+      const zip = new JSZip();
+
+      const capacitorConfig = {
+        appId: 'com.bestyoushop.fbscheduler',
+        appName: 'FB & Insta Pro Auto-Scheduler',
+        webDir: 'dist',
+        bundledWebRuntime: false,
+        server: {
+          url: 'https://ais-pre-qe5cjcleuj2hnn34l6fn3q-861841073237.asia-northeast1.run.app',
+          cleartext: true,
+        },
+      };
+
+      const androidReadme = `================================================================================
+FB & INSTA PRO AUTO-SCHEDULER v40.2 - ANDROID MOBILE (.APK) INSTALLATION
+================================================================================
+
+1. METHOD 1: INSTANT ANDROID WebAPK / PWA INSTALLATION (Fastest & Recommended)
+   -----------------------------------------------------------------------------
+   Aapko kisi computer ya Android Studio ki zaroorat nahi hai:
+   a) Apne Android phone ke Google Chrome browser me ye URL open karein:
+      https://ais-pre-qe5cjcleuj2hnn34l6fn3q-861841073237.asia-northeast1.run.app
+   b) Chrome ke upar right side 3 dots (Menu) par click karein.
+   c) "Install App" ya "Add to Home Screen" par tap karein.
+   d) Android OS khud iska official WebAPK generate karke aapke phone me install kar dega!
+   e) App ka icon aapki home screen par aa jayega aur full native app ki tarha chalega.
+
+2. METHOD 2: COMPILE STANDALONE APK VIA CAPACITOR & ANDROID STUDIO
+   -----------------------------------------------------------------------------
+   Agar aapko raw .apk file generate karni hai:
+   a) Node.js aur Android Studio install karein.
+   b) Terminal me yeh commands chalayein:
+      npm install @capacitor/core @capacitor/cli @capacitor/android
+      npx cap add android
+      npx cap open android
+   c) Android Studio me "Build > Build Bundle(s) / APK(s) > Build APK(s)" par click karein.
+   d) Aapko 'app-debug.apk' ya 'app-release.apk' file mil jayegi jo kisi bhi Android phone me install ho sakti hai!
+================================================================================
+`;
+
+      zip.file('capacitor.config.json', JSON.stringify(capacitorConfig, null, 2));
+      zip.file('README_ANDROID_APK_GUIDE.txt', androidReadme);
+
+      const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', 'attachment; filename="FB_Insta_Pro_Scheduler_Android_APK_Bundle.zip"');
+      res.send(zipBuffer);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ================= VITE DEV MIDDLEWARES =================
@@ -365,6 +814,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk, simpledialog
 import urllib.parse
 import urllib.request
 import json
+import random
 
 # Selenium with auto driver management
 try:
@@ -947,29 +1397,42 @@ class MultiAccountProApp:
         else:
             self.log_message("ℹ️ Video input element or local file path bypassed. Proceeding with caption & composer...")
 
-        # 4. Locate Caption / Textbox
-        self.log_message(f"✍️ Typing caption and hashtags into composer: '{caption[:40]}...'")
+        # 4. Locate Caption / Textbox & Real Human Typing Simulation
+        self.log_message(f"✍️ [HUMAN SIMULATION] Typing caption naturally like a real human: '{caption[:35]}...'")
         try:
             caption_boxes = driver.find_elements(By.CSS_SELECTOR, 'div[role="textbox"], div[contenteditable="true"], textarea[placeholder*="caption"]')
             if caption_boxes:
                 box = caption_boxes[0]
                 box.click()
-                time.sleep(1)
-                box.send_keys(caption)
-                self.log_message("✅ Caption entered successfully.")
+                time.sleep(random.uniform(0.8, 1.8))  # Human pause after clicking text area
+                
+                # Real human keystroke loop with randomized micro-delays
+                for char in caption:
+                    box.send_keys(char)
+                    # Natural variable delay (45ms to 160ms per keystroke)
+                    time.sleep(random.uniform(0.045, 0.160))
+                    # Natural breathing/thinking pause at punctuation or hashtags
+                    if char in [' ', '.', ',', '#', '!', '\\n']:
+                        if random.random() < 0.25:
+                            time.sleep(random.uniform(0.35, 0.85))
+                
+                self.log_message("✅ [HUMAN SIMULATION] Caption & hashtags entered with realistic human keystroke timing.")
         except Exception as ex_cap:
             self.log_message(f"Caption notice: {str(ex_cap)}")
 
-        time.sleep(3)
+        # 5. Natural Human Review Pause before clicking Publish
+        human_review_pause = random.uniform(2.5, 4.8)
+        self.log_message(f"⏳ [HUMAN SIMULATION] Natural human thinking pause ({human_review_pause:.1f}s) before publishing...")
+        time.sleep(human_review_pause)
 
-        # 5. Locate Publish / Schedule Button
+        # 6. Locate Publish / Schedule Button
         self.log_message("🔘 Locating 'Publish' / 'Schedule' button...")
         try:
             publish_btns = driver.find_elements(By.CSS_SELECTOR, 'div[role="button"][aria-label*="Publish"], div[role="button"][aria-label*="Schedule"], button[type="submit"]')
             if publish_btns:
                 self.log_message("🚀 Clicking Publish button...")
                 publish_btns[0].click()
-                time.sleep(6)
+                time.sleep(random.uniform(5.0, 7.5))
             else:
                 self.log_message("ℹ️ Automated Publish button click completed or awaiting manual review.")
         except Exception as ex_pub:

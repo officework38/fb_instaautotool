@@ -57,3 +57,27 @@ export interface FbApiConfig {
   tokenType?: string;
   isValid: boolean;
 }
+
+export interface SavedSession {
+  id: string;
+  nickname: string;
+  c_user: string;
+  source: 'mobile_app' | 'mobile_browser' | 'system_chrome' | 'cookie_vault';
+  cookies: string;
+  accessToken?: string;
+  savedAt: string;
+  lastUsed: string;
+  isActive: boolean;
+  avatarUrl?: string;
+}
+
+export interface HumanBehaviorConfig {
+  enabled: boolean;
+  typingDelayMinMs: number;
+  typingDelayMaxMs: number;
+  thinkingPauseSeconds: number;
+  antiBotStealthFlags: boolean;
+  persistentProfileSave: boolean;
+  randomMouseJitter: boolean;
+}
+

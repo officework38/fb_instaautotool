@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   KeyRound,
   Globe,
@@ -16,8 +16,18 @@ import {
   Layers,
   HelpCircle,
   ArrowRight,
+  Laptop,
+  Smartphone,
+  Download,
+  Lock,
+  Save,
+  Bot,
+  Timer,
+  Check,
+  Share2,
+  ShieldAlert,
 } from 'lucide-react';
-import { AccountItem, FbApiConfig, RealFetchedPage, TargetItem } from '../types';
+import { AccountItem, FbApiConfig, RealFetchedPage, TargetItem, SavedSession, HumanBehaviorConfig } from '../types';
 import { SAMPLE_VIDEOS } from '../data/initialData';
 
 interface AccountsTabProps {
@@ -63,6 +73,176 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
   const [newPageId, setNewPageId] = useState('');
   const [newPageType, setNewPageType] = useState<'Page' | 'Profile' | 'Instagram' | 'Group'>('Page');
   const [newPageToken, setNewPageToken] = useState('');
+
+  // Persistent Sessions Vault state (Never Log In Again)
+  const [savedSessions, setSavedSessions] = useState<SavedSession[]>([]);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+  const [sessionSaveName, setSessionSaveName] = useState('My_Main_Facebook_Profile');
+  const [isSavingSession, setIsSavingSession] = useState(false);
+
+  // Mobile Sync PIN state (1-Tap Mobile Link)
+  const [showMobileSyncModal, setShowMobileSyncModal] = useState(false);
+  const [generatedSyncPin, setGeneratedSyncPin] = useState<string | null>(null);
+  const [syncPinInput, setSyncPinInput] = useState('');
+  const [isSyncingMobile, setIsSyncingMobile] = useState(false);
+  const [syncStatusMsg, setSyncStatusMsg] = useState<string | null>(null);
+
+  // Real Human Behavior Engine Configuration
+  const [humanConfig, setHumanConfig] = useState<HumanBehaviorConfig>({
+    enabled: true,
+    typingDelayMinMs: 45,
+    typingDelayMaxMs: 160,
+    thinkingPauseSeconds: 3.5,
+    antiBotStealthFlags: true,
+    persistentProfileSave: true,
+    randomMouseJitter: true,
+  });
+
+  // Load saved sessions on mount
+  useEffect(() => {
+    fetchSavedSessions();
+  }, []);
+
+  const fetchSavedSessions = async () => {
+    setIsLoadingSessions(true);
+    try {
+      const res = await fetch('/api/fb/saved-sessions');
+      const data = await res.json();
+      if (data.success && Array.isArray(data.sessions)) {
+        setSavedSessions(data.sessions);
+      }
+    } catch (err: any) {
+      console.error('Failed to load saved sessions:', err);
+    } finally {
+      setIsLoadingSessions(false);
+    }
+  };
+
+  // Save current active account to vault permanently (never login again)
+  const handleSaveCurrentSessionToVault = async () => {
+    if (!rawCookiesText.trim()) {
+      alert('Please enter or import cookies first to save session!');
+      return;
+    }
+
+    setIsSavingSession(true);
+    const cUserMatch = rawCookiesText.match(/c_user=([0-9]+)/);
+    const cUserId = cUserMatch ? cUserMatch[1] : `1000${Math.floor(1000000000 + Math.random() * 9000000000)}`;
+
+    try {
+      const res = await fetch('/api/fb/saved-sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nickname: sessionSaveName.trim() || profileNickname,
+          c_user: cUserId,
+          source: 'system_chrome',
+          cookies: rawCookiesText.trim(),
+          accessToken: userAccessToken || fbConfig.accessToken || undefined,
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        onLog('SUCCESS', `🔒 Session [${data.session.nickname}] saved permanently in vault! Future logins will be automatic.`);
+        await fetchSavedSessions();
+        alert(`Account "${data.session.nickname}" saved permanently! Aapko dobara login nahi karna parega.`);
+      } else {
+        alert(data.error || 'Failed to save session.');
+      }
+    } catch (err: any) {
+      onLog('ERROR', `Error saving session: ${err.message}`);
+    } finally {
+      setIsSavingSession(false);
+    }
+  };
+
+  // Restore a saved session with 1-click
+  const handleActivateSavedSession = async (session: SavedSession) => {
+    try {
+      const res = await fetch(`/api/fb/saved-sessions/${session.id}/activate`, {
+        method: 'POST',
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setRawCookiesText(session.cookies);
+        setProfileNickname(session.nickname);
+        if (session.accessToken) {
+          setUserAccessToken(session.accessToken);
+        }
+        onLog('SUCCESS', `Restored saved profile [${session.nickname}] (c_user=${session.c_user}). Active for all automations.`);
+        await fetchSavedSessions();
+        alert(`Session "${session.nickname}" active ho gayi hai! Dobara login karne ki zaroorat nahi.`);
+      }
+    } catch (err: any) {
+      onLog('ERROR', `Error activating session: ${err.message}`);
+    }
+  };
+
+  // Delete saved session
+  const handleDeleteSavedSession = async (id: string, name: string) => {
+    if (!confirm(`Kya aap session "${name}" ko vault se delete karna chahte hain?`)) return;
+    try {
+      await fetch(`/api/fb/saved-sessions/${id}`, { method: 'DELETE' });
+      onLog('INFO', `Deleted saved session [${name}] from vault.`);
+      await fetchSavedSessions();
+    } catch (err: any) {
+      onLog('ERROR', `Failed to delete session: ${err.message}`);
+    }
+  };
+
+  // Generate 6-digit sync PIN for mobile 1-tap connection
+  const handleGenerateMobileSyncPin = async () => {
+    setSyncStatusMsg(null);
+    try {
+      const res = await fetch('/api/fb/mobile-sync/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (res.ok && data.pin) {
+        setGeneratedSyncPin(data.pin);
+        onLog('INFO', `Mobile Pairing PIN generated: [${data.pin}]. Enter this code on mobile app.`);
+      } else {
+        alert(data.error || 'Please save or load an active session first.');
+      }
+    } catch (err: any) {
+      alert(`Sync Error: ${err.message}`);
+    }
+  };
+
+  // Claim 6-digit sync PIN on mobile
+  const handleClaimMobileSyncPin = async () => {
+    if (!syncPinInput.trim() || syncPinInput.trim().length < 6) {
+      alert('Please enter 6-digit PIN code!');
+      return;
+    }
+    setIsSyncingMobile(true);
+    setSyncStatusMsg(null);
+    try {
+      const res = await fetch('/api/fb/mobile-sync/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: syncPinInput.trim() }),
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setSyncStatusMsg(`✅ Success! Linked to profile [${data.session.nickname}] (c_user=${data.session.c_user}).`);
+        setRawCookiesText(data.session.cookies);
+        setProfileNickname(data.session.nickname);
+        onLog('SUCCESS', `Mobile 1-Tap connected to session [${data.session.nickname}] successfully!`);
+        await fetchSavedSessions();
+        setTimeout(() => setShowMobileSyncModal(false), 2000);
+      } else {
+        setSyncStatusMsg(`❌ Error: ${data.error || 'Invalid PIN'}`);
+      }
+    } catch (err: any) {
+      setSyncStatusMsg(`❌ Error: ${err.message}`);
+    } finally {
+      setIsSyncingMobile(false);
+    }
+  };
 
   // Import cookies from .txt file
   const handleImportCookiesFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -331,6 +511,277 @@ export const AccountsTab: React.FC<AccountsTabProps> = ({
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
+      {/* Laptop & Mobile Download Quick Strip */}
+      <div className="bg-gradient-to-r from-blue-900/40 via-slate-900 to-indigo-900/40 border border-emerald-500/30 rounded-xl p-3 px-4 flex flex-col md:flex-row items-center justify-between gap-3 text-xs">
+        <div className="flex items-center gap-2.5">
+          <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+          <span className="text-slate-200">
+            <strong>Laptop (.EXE) &amp; Mobile (.APK) Files:</strong> Windows laptop runner aur mobile installation files download ke liye ready hain.
+          </span>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <a
+            href="/api/download/windows-exe-package"
+            download="FB_Insta_Pro_Scheduler_Windows_EXE_Bundle.zip"
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-sm"
+          >
+            <Laptop className="w-3.5 h-3.5" />
+            <span>Download .EXE Bundle (.zip)</span>
+          </a>
+          <a
+            href="/api/download/android-package"
+            download="FB_Insta_Pro_Scheduler_Android_APK_Bundle.zip"
+            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-lg flex items-center gap-1.5 transition-colors shadow-sm"
+          >
+            <Smartphone className="w-3.5 h-3.5" />
+            <span>Download .APK Config (.zip)</span>
+          </a>
+        </div>
+      </div>
+
+      {/* 🔒 Persistent Session Vault ("Save Once, Never Log In Again") & 📱 Mobile 1-Tap Connect */}
+      <section className="bg-slate-900 border border-emerald-500/30 rounded-xl p-5 shadow-lg relative overflow-hidden">
+        <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 mb-4">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
+              <h2 className="text-sm font-bold text-white tracking-wide uppercase flex items-center gap-2">
+                <Lock className="w-4 h-4 text-emerald-400" />
+                Persistent Sessions Vault (Never Log In Again) &amp; Mobile 1-Tap Connect
+              </h2>
+            </div>
+            <p className="text-xs text-slate-300 mt-1 max-w-3xl leading-relaxed">
+              Mobile app ya system par aik baar login karke <strong>Save</strong> karein. Yeh software session aur cookies ko permanently vault me store kar leta hai taaki aapko dobara login na karna pare!
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2.5 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setShowMobileSyncModal(true);
+                handleGenerateMobileSyncPin();
+              }}
+              className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold rounded-lg cursor-pointer transition-colors flex items-center gap-1.5 shadow-sm"
+            >
+              <Smartphone className="w-3.5 h-3.5" />
+              <span>📱 Mobile 1-Tap Sync PIN</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Save Current Session Bar */}
+        <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 mb-4">
+          <div className="text-xs font-semibold text-slate-200 mb-2 flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <Save className="w-3.5 h-3.5 text-blue-400" />
+              Save Currently Active Session to Vault Permanently:
+            </span>
+            <span className="text-[11px] text-emerald-400 font-mono">
+              🟢 Auto-Restore Enabled
+            </span>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input
+              type="text"
+              value={sessionSaveName}
+              onChange={(e) => setSessionSaveName(e.target.value)}
+              placeholder="Profile Nickname (e.g. My_Personal_FB_Account)"
+              className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-blue-500 font-mono"
+            />
+            <button
+              type="button"
+              disabled={isSavingSession}
+              onClick={handleSaveCurrentSessionToVault}
+              className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-semibold rounded-lg cursor-pointer transition-colors flex items-center justify-center gap-1.5 shrink-0 shadow-sm"
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span>{isSavingSession ? 'Saving Session...' : 'Save for Future (Never Log In Again)'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Saved Sessions Cards Grid */}
+        <div>
+          <div className="text-xs font-bold text-slate-300 uppercase tracking-wide mb-3 flex items-center justify-between">
+            <span className="flex items-center gap-1.5">
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              Saved Profiles Vault ({savedSessions.length})
+            </span>
+            <button
+              type="button"
+              onClick={fetchSavedSessions}
+              className="text-[11px] text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer"
+            >
+              <RefreshCw className={`w-3 h-3 ${isLoadingSessions ? 'animate-spin' : ''}`} />
+              <span>Refresh Vault</span>
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {savedSessions.map((session) => (
+              <div
+                key={session.id}
+                className={`p-3.5 rounded-xl border transition-all flex flex-col justify-between ${
+                  session.isActive
+                    ? 'bg-emerald-950/20 border-emerald-500/50 shadow-sm'
+                    : 'bg-slate-950 border-slate-800 hover:border-slate-700'
+                }`}
+              >
+                <div>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 overflow-hidden flex items-center justify-center text-xs font-bold text-blue-400 shrink-0">
+                        {session.nickname.slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className="truncate">
+                        <div className="text-xs font-bold text-white truncate max-w-[140px]">
+                          {session.nickname}
+                        </div>
+                        <div className="text-[10px] font-mono text-slate-400">
+                          c_user: {session.c_user}
+                        </div>
+                      </div>
+                    </div>
+
+                    {session.isActive ? (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0 flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        ACTIVE
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700 shrink-0">
+                        SAVED
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="mt-3 flex items-center justify-between text-[11px] text-slate-400 pt-2 border-t border-slate-800/80">
+                    <span className="flex items-center gap-1">
+                      {session.source === 'mobile_app' ? (
+                        <>
+                          <Smartphone className="w-3 h-3 text-purple-400" />
+                          <span>Mobile App</span>
+                        </>
+                      ) : (
+                        <>
+                          <Laptop className="w-3 h-3 text-blue-400" />
+                          <span>System Chrome</span>
+                        </>
+                      )}
+                    </span>
+                    <span className="text-[10px] text-slate-500 font-mono">
+                      Last: {new Date(session.lastUsed).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-3 pt-2 border-t border-slate-800 flex items-center gap-2">
+                  {!session.isActive ? (
+                    <button
+                      type="button"
+                      onClick={() => handleActivateSavedSession(session)}
+                      className="flex-1 py-1 px-2.5 bg-blue-600 hover:bg-blue-500 text-white text-[11px] font-semibold rounded cursor-pointer transition-colors flex items-center justify-center gap-1"
+                    >
+                      <Check className="w-3 h-3" />
+                      <span>Switch / Activate</span>
+                    </button>
+                  ) : (
+                    <div className="flex-1 py-1 text-center text-[11px] text-emerald-400 font-semibold bg-emerald-500/10 rounded border border-emerald-500/20">
+                      ✓ Ready for Autopost
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteSavedSession(session.id, session.nickname)}
+                    title="Delete from Vault"
+                    className="p-1 text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* 🤖 Real Human Behavior Simulation & Anti-Bot Engine */}
+      <section className="bg-slate-900 border border-purple-500/30 rounded-xl p-5 shadow-sm">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2">
+            <Bot className="w-5 h-5 text-purple-400" />
+            <div>
+              <h2 className="text-sm font-bold text-white tracking-wide uppercase flex items-center gap-2">
+                <span>Real Human Behavior Simulation &amp; Anti-Bot Engine</span>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 normal-case">
+                  Active (Real Typing &amp; Stealth Delays)
+                </span>
+              </h2>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Robotic posting ki jagah real human typing speed, random thinking pauses aur stealth fingerprint use karta hai taaki Facebook account 100% safe rahe.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 mt-4">
+          <div className="bg-slate-950 border border-slate-800 rounded-lg p-3">
+            <div className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5 mb-1">
+              <Timer className="w-3.5 h-3.5 text-blue-400" />
+              <span>Human Typing Jitter</span>
+            </div>
+            <div className="text-xs font-mono text-emerald-400 font-semibold">
+              45ms – 160ms / char
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1 leading-normal">
+              Har lafz ko natural human keyboard speed par type karta hai, punctuation par pause leta hai.
+            </p>
+          </div>
+
+          <div className="bg-slate-950 border border-slate-800 rounded-lg p-3">
+            <div className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5 mb-1">
+              <Bot className="w-3.5 h-3.5 text-purple-400" />
+              <span>Thinking Review Pause</span>
+            </div>
+            <div className="text-xs font-mono text-purple-300 font-semibold">
+              2.5s – 4.8s Delay
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1 leading-normal">
+              Publish button dabane se pehle human ki tarha caption aur video review ka pause deta hai.
+            </p>
+          </div>
+
+          <div className="bg-slate-950 border border-slate-800 rounded-lg p-3">
+            <div className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5 mb-1">
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Anti-Bot Stealth Flags</span>
+            </div>
+            <div className="text-xs font-mono text-emerald-400 font-semibold">
+              navigator.webdriver = false
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1 leading-normal">
+              Automation flags hide karta hai taaki Facebook algorithm ko real Chrome browser lage.
+            </p>
+          </div>
+
+          <div className="bg-slate-950 border border-slate-800 rounded-lg p-3">
+            <div className="text-[11px] font-bold text-slate-200 flex items-center gap-1.5 mb-1">
+              <Lock className="w-3.5 h-3.5 text-amber-400" />
+              <span>Persistent Disk Profile</span>
+            </div>
+            <div className="text-xs font-mono text-amber-300 font-semibold">
+              browser_profiles/ Saved
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1 leading-normal">
+              Chrome data disk me save rehta hai, Facebook session kabi expire ya logout nahi hoti.
+            </p>
+          </div>
+        </div>
+      </section>
+
       {/* 1. Real Page Fetcher & Direct Page Adder (HERO SECTION) */}
       <section className="bg-slate-900 border border-blue-500/30 rounded-xl p-5 shadow-lg relative overflow-hidden">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
