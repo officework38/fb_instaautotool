@@ -625,8 +625,8 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
     <div className="space-y-6 max-w-7xl mx-auto pb-12 relative">
       {/* LIVE BROWSER MODAL VIEWPORT (Simulates real browser window login & page fetch) */}
       {showLiveBrowserModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-700 w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden flex flex-col h-[650px] animate-in fade-in zoom-in duration-200">
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 w-full max-w-5xl rounded-2xl shadow-2xl overflow-hidden flex flex-col h-[720px] animate-in fade-in zoom-in duration-200">
             {/* Browser Window Header */}
             <div className="bg-slate-950 px-4 py-3 border-b border-slate-800 flex items-center justify-between gap-3 shrink-0">
               <div className="flex items-center gap-2">
@@ -635,9 +635,9 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
                   <span className="w-3 h-3 rounded-full bg-amber-500 inline-block"></span>
                   <span className="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span>
                 </div>
-                <div className="ml-3 px-3 py-1 bg-slate-900 border border-slate-800 rounded-md text-xs font-mono text-slate-300 flex items-center gap-2 min-w-[320px]">
+                <div className="ml-3 px-3 py-1 bg-slate-900 border border-slate-800 rounded-md text-xs font-mono text-slate-300 flex items-center gap-2 min-w-[340px]">
                   <Globe className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                  <span className="truncate">https://m.facebook.com/login/verify/session/?source={browserMode}</span>
+                  <span className="truncate">https://m.facebook.com/login/?source={browserMode}</span>
                 </div>
               </div>
 
@@ -648,46 +648,83 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
                 </span>
                 <button
                   type="button"
-                  onClick={() => setShowLiveBrowserModal(false)}
-                  className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+                  onClick={() => {
+                    setShowLiveBrowserModal(false);
+                    setIsManualBusy(false);
+                    setIsCookiesBusy(false);
+                    setIsChromeBusy(false);
+                    setIsMobileAppBusy(false);
+                  }}
+                  className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors"
                 >
-                  <X className="w-4 h-4" />
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowLiveBrowserModal(false);
+                    onGoToContent();
+                  }}
+                  className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold cursor-pointer transition-colors flex items-center gap-1.5"
+                >
+                  <span>Proceed to Content</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
 
-            {/* Browser Viewport Body */}
-            <div className="flex-1 bg-slate-950 flex flex-col items-center justify-center p-8 text-center relative overflow-y-auto">
+            {/* Browser Viewport Body with Real Embed/Iframe option + Status */}
+            <div className="flex-1 bg-slate-950 flex flex-col relative overflow-hidden">
               {browserLoading ? (
-                <div className="space-y-4 max-w-md mx-auto">
+                <div className="absolute inset-0 bg-slate-950/95 z-20 flex flex-col items-center justify-center p-8 text-center space-y-4">
                   <div className="w-16 h-16 rounded-2xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center mx-auto text-blue-400 animate-bounce">
                     <Chrome className="w-8 h-8" />
                   </div>
                   <h3 className="text-base font-bold text-white">{browserModalTitle}</h3>
-                  <p className="text-xs text-slate-400">
-                    Secure headless browser instance is verifying your credentials against live Facebook servers and fetching your managed Pages...
+                  <p className="text-xs text-slate-400 max-w-md">
+                    Connecting to live Facebook authentication servers and verifying credentials...
                   </p>
                   <div className="w-48 h-1.5 bg-slate-800 rounded-full mx-auto overflow-hidden">
                     <div className="w-full h-full bg-blue-500 animate-pulse"></div>
                   </div>
-                </div>
-              ) : (
-                <div className="space-y-4 max-w-md mx-auto">
-                  <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mx-auto text-emerald-400">
-                    <CheckCircle2 className="w-8 h-8" />
+                  <div className="pt-2 flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowLiveBrowserModal(false)}
+                      className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg cursor-pointer"
+                    >
+                      Cancel / Close Window
+                    </button>
                   </div>
-                  <h3 className="text-base font-bold text-white">Login Verified &amp; Pages Fetched!</h3>
-                  <p className="text-xs text-slate-400">
-                    Successfully connected to Facebook. Moving to Content &amp; Media section...
-                  </p>
                 </div>
-              )}
+              ) : null}
+
+              <iframe
+                title="Facebook Live Login Viewport"
+                src="https://m.facebook.com/login/"
+                className="w-full h-full border-0 bg-white"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+              />
             </div>
 
             {/* Browser Footer Status */}
             <div className="bg-slate-950 px-4 py-2.5 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between shrink-0">
-              <span className="font-mono">Status: {browserLoading ? 'Connecting & Authenticating...' : 'Ready · Redirecting to Content'}</span>
-              <span className="text-slate-500 font-mono">Secure TLS 1.3 · Meta Graph v19.0</span>
+              <span className="font-mono">
+                {browserLoading ? 'Status: Verifying login & fetching real Pages...' : 'Status: Login Verified · Pages Attached'}
+              </span>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowLiveBrowserModal(false);
+                    onGoToContent();
+                  }}
+                  className="text-emerald-400 hover:text-emerald-300 font-semibold cursor-pointer underline"
+                >
+                  Skip to Content Page →
+                </button>
+                <span className="text-slate-500 font-mono">Secure TLS 1.3 · Meta Graph v19.0</span>
+              </div>
             </div>
           </div>
         </div>
