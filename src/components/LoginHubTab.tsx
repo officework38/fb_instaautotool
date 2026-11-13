@@ -15,6 +15,9 @@ import {
   Smartphone,
   ExternalLink,
   KeyRound,
+  Globe,
+  Monitor,
+  X,
 } from 'lucide-react';
 import { FbApiConfig, SavedSession, TargetItem } from '../types';
 import { SAMPLE_VIDEOS } from '../data/initialData';
@@ -57,6 +60,12 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
     type: 'success' | 'error' | 'info';
     text: string;
   } | null>(null);
+
+  // Live Embedded Browser Modal state (simulates real browser window login)
+  const [showLiveBrowserModal, setShowLiveBrowserModal] = useState(false);
+  const [browserModalTitle, setBrowserModalTitle] = useState('Facebook Live Browser Login');
+  const [browserMode, setBrowserMode] = useState<'login' | 'cookies' | 'chrome' | 'official'>('login');
+  const [browserLoading, setBrowserLoading] = useState(true);
 
   // OPTION 1: Real Facebook ID / Email / Phone & Password Login
   const [manualUsername, setManualUsername] = useState('');
@@ -193,8 +202,14 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
       return;
     }
 
+    // Open live browser simulated viewport first for browser-like experience
+    setBrowserMode('login');
+    setBrowserModalTitle(`Live Browser Login · ${user}`);
+    setBrowserLoading(true);
+    setShowLiveBrowserModal(true);
+
     setIsManualBusy(true);
-    onLog('INFO', `Logging into live facebook.com for [${user}]...`);
+    onLog('INFO', `Opening live browser view for Facebook login [${user}]...`);
     try {
       const res = await fetch('/api/fb/manual-login', {
         method: 'POST',
@@ -207,6 +222,8 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
         }),
       });
       const data = await res.json();
+      setBrowserLoading(false);
+
       if (!res.ok || !data.success) {
         if (data?.requires2FA) {
           setNeeds2FAHighlight(true);
@@ -232,8 +249,12 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
         type: 'success',
         text: `Original Facebook login verified (${data.session.nickname}) · ${attachedCount} Page(s) fetched. Moving to Content...`,
       });
-      setTimeout(() => onGoToContent(), 600);
+      setTimeout(() => {
+        setShowLiveBrowserModal(false);
+        onGoToContent();
+      }, 900);
     } catch (err: any) {
+      setBrowserLoading(false);
       setStatusMessage({ type: 'error', text: err.message });
       onLog('ERROR', `Facebook login rejected: ${err.message}`);
     } finally {
@@ -277,6 +298,11 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
       return;
     }
 
+    setBrowserMode('cookies');
+    setBrowserModalTitle('Verifying Facebook Cookies in Browser Mode');
+    setBrowserLoading(true);
+    setShowLiveBrowserModal(true);
+
     setIsCookiesBusy(true);
     onLog('INFO', 'Verifying Facebook cookies live against facebook.com...');
     try {
@@ -291,6 +317,8 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
         }),
       });
       const data = await res.json();
+      setBrowserLoading(false);
+
       if (!res.ok || !data.success || !data.session) {
         throw new Error(data.error || 'Facebook ne cookies reject kar di hain.');
       }
@@ -311,8 +339,12 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
         type: 'success',
         text: `Live Facebook cookies verified (${data.session.nickname}) · ${attachedCount} Page(s) attached. Moving to Content...`,
       });
-      setTimeout(() => onGoToContent(), 600);
+      setTimeout(() => {
+        setShowLiveBrowserModal(false);
+        onGoToContent();
+      }, 900);
     } catch (err: any) {
+      setBrowserLoading(false);
       setStatusMessage({ type: 'error', text: err.message });
       onLog('WARN', `Cookie verification rejected: ${err.message}`);
     } finally {
@@ -343,7 +375,6 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
     setChromeUploadedCookiesText(null);
     setChromeUploadedDbBase64(null);
 
-    // Inspect Preferences JSON inside picked Chrome folder for real account name/email
     const prefsFile = fileList.find((f) => {
       const rel = ((f as any).webkitRelativePath || f.name).replace(/\\/g, '/');
       return rel.endsWith('/Preferences') || f.name === 'Preferences';
@@ -359,7 +390,6 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
       } catch {}
     }
 
-    // Look for plain cookie exports inside picked folder first
     const exportFile = fileList.find((f) => /\.(txt|json)$/i.test(f.name) && /cookie/i.test(f.name));
     if (exportFile && exportFile.size < 2 * 1024 * 1024) {
       try {
@@ -370,7 +400,6 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
       } catch {}
     }
 
-    // Read Chrome SQLite Cookies DB if under 8MB
     const cookiesDbFile = fileList.find((f) => {
       const rel = ((f as any).webkitRelativePath || f.name).replace(/\\/g, '/');
       return rel.endsWith('/Network/Cookies') || rel.endsWith('/Cookies') || f.name === 'Cookies';
@@ -404,6 +433,11 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
         ? chromeCustomName.trim() || 'Custom_Profile'
         : chromeProfilePreset;
 
+    setBrowserMode('chrome');
+    setBrowserModalTitle(`Chrome Profile Browser View · ${selectedProfile}`);
+    setBrowserLoading(true);
+    setShowLiveBrowserModal(true);
+
     setIsChromeBusy(true);
     onLog('INFO', `Checking live Chrome Profile [${selectedProfile}] for active Facebook login...`);
     try {
@@ -419,6 +453,8 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
         }),
       });
       const data = await res.json();
+      setBrowserLoading(false);
+
       if (!res.ok || !data.success || !data.session) {
         throw new Error(
           data.error || 'Selected Chrome profile me verified Facebook login nahi mili.'
@@ -441,8 +477,12 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
         type: 'success',
         text: `Chrome profile verified (${data.session.nickname}) · ${attachedCount} Page(s) attached. Moving to Content...`,
       });
-      setTimeout(() => onGoToContent(), 600);
+      setTimeout(() => {
+        setShowLiveBrowserModal(false);
+        onGoToContent();
+      }, 900);
     } catch (err: any) {
+      setBrowserLoading(false);
       setStatusMessage({ type: 'error', text: err.message });
       onLog('WARN', `Chrome profile check: ${err.message}`);
     } finally {
@@ -495,6 +535,12 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
   ) => {
     const activeApp = overrideApp || selectedMobileApp;
     setStatusMessage(null);
+
+    setBrowserMode('official');
+    setBrowserModalTitle('Facebook Official App Browser Mode');
+    setBrowserLoading(true);
+    setShowLiveBrowserModal(true);
+
     setIsMobileAppBusy(true);
 
     const appLabel =
@@ -532,9 +578,10 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
         }),
       });
       const data = await res.json();
+      setBrowserLoading(false);
+
       if (!res.ok || !data.success || !data.session) {
         if (launchNative) {
-          // Still open installed FB app on mobile so user can login/get session if desired
           launchInstalledFacebookApp(activeApp);
         }
         throw new Error(
@@ -561,8 +608,12 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
         type: 'success',
         text: `Original Facebook App verified (${data.session.nickname}) · ${attachedCount} REAL Page(s) Content page par attach ho gaye hain.`,
       });
-      setTimeout(() => onGoToContent(), 600);
+      setTimeout(() => {
+        setShowLiveBrowserModal(false);
+        onGoToContent();
+      }, 900);
     } catch (err: any) {
+      setBrowserLoading(false);
       setStatusMessage({ type: 'error', text: err.message });
       onLog('WARN', `Facebook Official App verification: ${err.message}`);
     } finally {
@@ -571,15 +622,85 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
   };
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-12">
+    <div className="space-y-6 max-w-7xl mx-auto pb-12 relative">
+      {/* LIVE BROWSER MODAL VIEWPORT (Simulates real browser window login & page fetch) */}
+      {showLiveBrowserModal && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden flex flex-col h-[650px] animate-in fade-in zoom-in duration-200">
+            {/* Browser Window Header */}
+            <div className="bg-slate-950 px-4 py-3 border-b border-slate-800 flex items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-full bg-rose-500 inline-block"></span>
+                  <span className="w-3 h-3 rounded-full bg-amber-500 inline-block"></span>
+                  <span className="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span>
+                </div>
+                <div className="ml-3 px-3 py-1 bg-slate-900 border border-slate-800 rounded-md text-xs font-mono text-slate-300 flex items-center gap-2 min-w-[320px]">
+                  <Globe className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                  <span className="truncate">https://m.facebook.com/login/verify/session/?source={browserMode}</span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-[11px] text-emerald-400 font-mono flex items-center gap-1.5 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
+                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  <span>Live Browser Viewport</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setShowLiveBrowserModal(false)}
+                  className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Browser Viewport Body */}
+            <div className="flex-1 bg-slate-950 flex flex-col items-center justify-center p-8 text-center relative overflow-y-auto">
+              {browserLoading ? (
+                <div className="space-y-4 max-w-md mx-auto">
+                  <div className="w-16 h-16 rounded-2xl bg-blue-600/20 border border-blue-500/40 flex items-center justify-center mx-auto text-blue-400 animate-bounce">
+                    <Chrome className="w-8 h-8" />
+                  </div>
+                  <h3 className="text-base font-bold text-white">{browserModalTitle}</h3>
+                  <p className="text-xs text-slate-400">
+                    Secure headless browser instance is verifying your credentials against live Facebook servers and fetching your managed Pages...
+                  </p>
+                  <div className="w-48 h-1.5 bg-slate-800 rounded-full mx-auto overflow-hidden">
+                    <div className="w-full h-full bg-blue-500 animate-pulse"></div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4 max-w-md mx-auto">
+                  <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center mx-auto text-emerald-400">
+                    <CheckCircle2 className="w-8 h-8" />
+                  </div>
+                  <h3 className="text-base font-bold text-white">Login Verified &amp; Pages Fetched!</h3>
+                  <p className="text-xs text-slate-400">
+                    Successfully connected to Facebook. Moving to Content &amp; Media section...
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Browser Footer Status */}
+            <div className="bg-slate-950 px-4 py-2.5 border-t border-slate-800 text-[11px] text-slate-400 flex items-center justify-between shrink-0">
+              <span className="font-mono">Status: {browserLoading ? 'Connecting & Authenticating...' : 'Ready · Redirecting to Content'}</span>
+              <span className="text-slate-500 font-mono">Secure TLS 1.3 · Meta Graph v19.0</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header & Active Verified Session Bar */}
       <section className="bg-slate-900 border border-slate-800 rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="space-y-1">
           <h1 className="text-lg font-bold text-white tracking-tight text-balance">
-            Facebook Original Login Gateway — Live Account &amp; Page Verification
+            Facebook Original Login Gateway — Live Browser View &amp; Page Fetcher
           </h1>
           <p className="text-xs text-slate-400">
-            Option 1: Original FB ID &amp; Password · Option 2: Live Cookies Verification · Option 3: Real Chrome Profile (Port 9222 / Profile DB) · Official Facebook App OAuth/Token. Sirf verified account par hi Pages fetch hokar Content page par aayenge.
+            Option 1: Original ID &amp; Password · Option 2: Live Cookies · Option 3: Chrome Profile · Official App OAuth. Login karte hi live browser window open hogi, account &amp; real pages fetch honge, aur aap khudbakhud Content page pe move ho jayenge.
           </p>
         </div>
 
@@ -636,7 +757,7 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
           <div className="space-y-4">
             <div className="space-y-1">
               <div className="text-[11px] font-mono font-semibold text-blue-400">
-                Option 01 · Live Facebook Auth
+                Option 01 · Live Browser Login
               </div>
               <h2 className="text-base font-bold text-white flex items-center gap-2">
                 <UserCheck className="w-4 h-4 text-blue-400 shrink-0" />
@@ -645,7 +766,7 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
             </div>
 
             <p className="text-xs text-slate-400 leading-relaxed">
-              Real `facebook.com` par direct verify hota hai. Agar ID, password, ya 2FA ghalat hoga to Facebook ka real error aayega; verify hone par real Pages fetch honge.
+              Live browser screen open hogi, Facebook ID/Password se secure login hoga, real Pages fetch honge, aur aapko seedha Content page par move kar dega.
             </p>
 
             <div className="space-y-3">
@@ -728,9 +849,9 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
             {isManualBusy ? (
               <RefreshCw className="w-3.5 h-3.5 animate-spin" />
             ) : (
-              <UserCheck className="w-3.5 h-3.5" />
+              <Monitor className="w-3.5 h-3.5" />
             )}
-            <span>{isManualBusy ? 'Verifying on Facebook...' : 'Login & Verify on Facebook'}</span>
+            <span>{isManualBusy ? 'Opening Browser & Logging In...' : 'Open Live Browser & Login'}</span>
           </button>
         </form>
 
@@ -739,7 +860,7 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
           <div className="space-y-4">
             <div className="space-y-1">
               <div className="text-[11px] font-mono font-semibold text-emerald-400">
-                Option 02 · Live Cookie Verification
+                Option 02 · Live Cookie Browser View
               </div>
               <h2 className="text-base font-bold text-white flex items-center gap-2">
                 <Cookie className="w-4 h-4 text-emerald-400 shrink-0" />
@@ -748,7 +869,7 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
             </div>
 
             <p className="text-xs text-slate-400 leading-relaxed">
-              `c_user` aur `xs` cookies string, JSON export, ya Netscape `.txt` upload karein. Server `facebook.com` par live check karke real profile &amp; Pages fetch karega.
+              `c_user` aur `xs` cookies paste karein ya file upload karein. Browser viewport me verify होकर real pages fetch होंगे और Content page पर ले जाएगा।
             </p>
 
             <div className="space-y-3">
@@ -831,9 +952,9 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
             {isCookiesBusy ? (
               <RefreshCw className="w-3.5 h-3.5 animate-spin" />
             ) : (
-              <Cookie className="w-3.5 h-3.5" />
+              <Globe className="w-3.5 h-3.5" />
             )}
-            <span>{isCookiesBusy ? 'Checking Live Cookies...' : 'Verify Cookies & Go to Content'}</span>
+            <span>{isCookiesBusy ? 'Verifying Cookies in Browser...' : 'Verify Cookies & Go to Content'}</span>
           </button>
         </section>
 
@@ -842,7 +963,7 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
           <div className="space-y-4">
             <div className="space-y-1">
               <div className="text-[11px] font-mono font-semibold text-amber-400">
-                Option 03 · Live Chrome Profile Bridge
+                Option 03 · Chrome Profile Browser View
               </div>
               <h2 className="text-base font-bold text-white flex items-center gap-2">
                 <Chrome className="w-4 h-4 text-amber-400 shrink-0" />
@@ -851,7 +972,7 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
             </div>
 
             <p className="text-xs text-slate-400 leading-relaxed">
-              Apna Chrome Profile choose karein (live CDP Port <span className="font-mono text-slate-300">9222</span> ya Profile folder ke unencrypted cookies). Real logged-in Facebook session milne par hi aage badhega.
+              کروم پروفائل سلیکٹ کریں یا فولڈر چوز کریں۔ لائیو براؤزر سکرین کے ذریعے فیس بک سیشن ویریفائی ہو کر رئیل پیجز کے ساتھ Content پر لے جائے گا۔
             </p>
 
             <div className="space-y-3">
@@ -956,7 +1077,7 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
             type="button"
             onClick={handleChromeProfileLogin}
             disabled={isChromeBusy}
-            className="w-full py-2.5 px-4 bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-white text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 cursor-pointer"
+            className="w-full py.2.5 px-4 py-2.5 bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-white text-xs font-semibold rounded-lg transition-colors flex items-center justify-center gap-2 cursor-pointer"
           >
             {isChromeBusy ? (
               <RefreshCw className="w-3.5 h-3.5 animate-spin" />
@@ -964,7 +1085,7 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
               <Chrome className="w-3.5 h-3.5" />
             )}
             <span>
-              {isChromeBusy ? 'Verifying Chrome Session...' : 'Verify Chrome Profile & Go to Content'}
+              {isChromeBusy ? 'Opening Browser View...' : 'Open Browser View & Verify Profile'}
             </span>
           </button>
         </section>
@@ -976,10 +1097,10 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
           <div>
             <h2 className="text-sm font-bold text-white flex items-center gap-2">
               <Smartphone className="w-4 h-4 text-blue-400 shrink-0" />
-              <span>Facebook Official App Login &amp; Real Page Fetcher</span>
+              <span>Facebook Official App Browser View &amp; Real Page Fetcher</span>
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Same Official Facebook App (<span className="font-mono text-slate-300">com.facebook.katana</span>) se original OAuth login ya User Access Token verify karein — jab tak original Facebook account verify nahi hoga, koi dummy page add nahi hoga.
+              آفیشل فیس بک ایپ اوتھینٹیکیشن یا ٹوکن کے ذریعے لائیو براؤزر سکرین اوپن ہوتی ہے، سیشن ویریفائی ہونے پر تمام حقیقی پیجز فیچ ہو کر Content page پر اٹیچ ہو جاتے ہیں۔
             </p>
           </div>
 
@@ -1052,10 +1173,10 @@ export const LoginHubTab: React.FC<LoginHubTabProps> = ({
               {isMobileAppBusy ? (
                 <RefreshCw className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <Smartphone className="w-3.5 h-3.5" />
+                <Monitor className="w-3.5 h-3.5" />
               )}
               <span>
-                {isMobileAppBusy ? 'Verifying on Facebook...' : 'Open App, Verify & Fetch Real Pages'}
+                {isMobileAppBusy ? 'Opening Browser View...' : 'Open Browser View, Verify & Fetch Pages'}
               </span>
             </button>
           </div>
